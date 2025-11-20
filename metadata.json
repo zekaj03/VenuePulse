@@ -1,0 +1,5 @@
+{
+  "name": "VenuePulse",
+  "description": "A sleek, modern application for bars and clubs to track guest entry and exit, categorizing by gender to monitor venue capacity and demographics in real-time.",
+  "requestFramePermissions": []
+}
