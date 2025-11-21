@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Gender, LogEntry } from './types';
+import { Gender, LogEntry, CapacityThreshold, UndoAction, SubscriptionStatus, SubscriptionTier } from './types';
 import { languages, translations } from './locales';
 import AnalyticsDashboard from './AnalyticsDashboard';
 
@@ -7,24 +7,57 @@ import AnalyticsDashboard from './AnalyticsDashboard';
 
 type Theme = 'light' | 'dark' | 'system';
 type Language = keyof typeof languages;
+type TimeFormat = '12h' | '24h';
+type DateFormat = 'DD.MM.YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD';
 type ToneSettings = { master: boolean; ui: boolean; guestIn: boolean; guestOut: boolean; alert: boolean; };
 type CustomizationSettings = { accentColor: string; showOther: boolean; };
-type AppSettings = { tones: ToneSettings; customization: CustomizationSettings; };
+type AdvancedSettings = {
+  timeFormat: TimeFormat;
+  dateFormat: DateFormat;
+  dataRetentionDays: number; // 0 means never delete
+  capacityThresholds: CapacityThreshold[];
+};
+type AppSettings = {
+  tones: ToneSettings;
+  customization: CustomizationSettings;
+  advanced: AdvancedSettings;
+};
 
 // Validatoren für das sichere Laden aus dem localStorage
-const isLogEntryArray = (value: any): value is LogEntry[] => 
-  Array.isArray(value) && 
-  value.every(item => 
+const isLogEntryArray = (value: any): value is LogEntry[] =>
+  Array.isArray(value) &&
+  value.every(item =>
     item &&
-    typeof item.id === 'number' && 
+    typeof item.id === 'number' &&
     typeof item.action === 'string' && (item.action === 'in' || item.action === 'out') &&
     typeof item.gender === 'string' && Object.values(Gender).includes(item.gender as Gender) &&
     item.timestamp instanceof Date && !isNaN(item.timestamp.getTime())
   );
 const isTheme = (value: any): value is Theme => ['light', 'dark', 'system'].includes(value);
 const isLanguage = (value: any): value is Language => Object.keys(languages).includes(value);
+const isTimeFormat = (value: any): value is TimeFormat => ['12h', '24h'].includes(value);
+const isDateFormat = (value: any): value is DateFormat => ['DD.MM.YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD'].includes(value);
 const isToneSettings = (value: any): value is ToneSettings => value && typeof value.master === 'boolean' && typeof value.ui === 'boolean' && typeof value.guestIn === 'boolean' && typeof value.guestOut === 'boolean' && typeof value.alert === 'boolean';
 const isCustomizationSettings = (value: any): value is CustomizationSettings => value && typeof value.accentColor === 'string' && typeof value.showOther === 'boolean';
+const isCapacityThreshold = (value: any): value is CapacityThreshold => value && typeof value.percentage === 'number' && typeof value.enabled === 'boolean';
+const isAdvancedSettings = (value: any): value is AdvancedSettings =>
+  value &&
+  isTimeFormat(value.timeFormat) &&
+  isDateFormat(value.dateFormat) &&
+  typeof value.dataRetentionDays === 'number' &&
+  Array.isArray(value.capacityThresholds) &&
+  value.capacityThresholds.every(isCapacityThreshold);
+const isAppSettings = (value: any): value is AppSettings =>
+  value &&
+  isToneSettings(value.tones) &&
+  isCustomizationSettings(value.customization) &&
+  isAdvancedSettings(value.advanced);
+const isSubscriptionTier = (value: any): value is SubscriptionTier => ['free', 'premium'].includes(value);
+const isSubscriptionStatus = (value: any): value is SubscriptionStatus =>
+  value &&
+  isSubscriptionTier(value.tier) &&
+  typeof value.isActive === 'boolean' &&
+  (value.expiresAt === null || value.expiresAt instanceof Date);
 
 
 // ========= HELPER-FUNKTIONEN ========= //
@@ -112,6 +145,79 @@ const exportToCsv = (data: DailySummary[], header: string[], filename: string) =
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+};
+
+const exportToJson = (data: any, filename: string) => {
+    const jsonContent = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+    const link = document.createElement('a');
+    link.setAttribute('href', jsonContent);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+};
+
+const formatTime = (date: Date, format: TimeFormat, locale: string): string => {
+    if (format === '12h') {
+        return date.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: true });
+    }
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
+};
+
+const formatDate = (date: Date, format: DateFormat): string => {
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+
+    switch (format) {
+        case 'DD.MM.YYYY':
+            return `${day}.${month}.${year}`;
+        case 'MM/DD/YYYY':
+            return `${month}/${day}/${year}`;
+        case 'YYYY-MM-DD':
+            return `${year}-${month}-${day}`;
+        default:
+            return `${day}.${month}.${year}`;
+    }
+};
+
+const downloadBackup = (counts: any, log: any, settings: any, maxCapacity: number, theme: Theme, language: Language) => {
+    const backup = {
+        version: '1.0',
+        timestamp: new Date().toISOString(),
+        data: {
+            counts,
+            log,
+            settings,
+            maxCapacity,
+            theme,
+            language,
+        }
+    };
+    exportToJson(backup, `venuepulse_backup_${new Date().toISOString().split('T')[0]}.json`);
+};
+
+const restoreFromBackup = (file: File, callback: (data: any) => void, errorCallback: () => void) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const backup = JSON.parse(e.target?.result as string);
+            if (backup.version && backup.data) {
+                // Parse timestamps in log
+                if (backup.data.log && Array.isArray(backup.data.log)) {
+                    backup.data.log.forEach((entry: any) => {
+                        entry.timestamp = new Date(entry.timestamp);
+                    });
+                }
+                callback(backup.data);
+            } else {
+                errorCallback();
+            }
+        } catch (error) {
+            errorCallback();
+        }
+    };
+    reader.readAsText(file);
 };
 
 
@@ -408,23 +514,63 @@ const App: React.FC = () => {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
+    const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
     const [showCapacityAlert, setShowCapacityAlert] = useState(false);
     
     const [settings, setSettings] = useState<AppSettings>(() => loadValidatedState('club_settings', {
         tones: { master: true, ui: true, guestIn: true, guestOut: true, alert: true },
         customization: { accentColor: 'cyan', showOther: true },
-    }, (v: any): v is AppSettings => v && isToneSettings(v.tones) && isCustomizationSettings(v.customization)));
+        advanced: {
+            timeFormat: '24h' as TimeFormat,
+            dateFormat: 'DD.MM.YYYY' as DateFormat,
+            dataRetentionDays: 0,
+            capacityThresholds: [
+                { percentage: 50, enabled: true, notified: false },
+                { percentage: 75, enabled: true, notified: false },
+                { percentage: 90, enabled: true, notified: false },
+            ],
+        },
+    }, isAppSettings));
     const [theme, setTheme] = useState<Theme>(() => loadValidatedState('club_theme', 'system', isTheme));
     const [language, setLanguage] = useState<Language>(() => {
       const savedLang = loadValidatedState('club_language', navigator.language.split('-')[0], isLanguage);
       return isLanguage(savedLang) ? savedLang : 'en';
     });
+    const [subscription, setSubscription] = useState<SubscriptionStatus>(() => {
+        const stored = loadValidatedState('club_subscription', { tier: 'free', isActive: true, expiresAt: null }, (v: any): v is SubscriptionStatus => {
+            if (!v || !isSubscriptionTier(v.tier) || typeof v.isActive !== 'boolean') return false;
+            if (v.expiresAt !== null) {
+                v.expiresAt = new Date(v.expiresAt);
+                if (isNaN(v.expiresAt.getTime())) return false;
+            }
+            return true;
+        });
+        return stored;
+    });
 
 
     const [tutorialStep, setTutorialStep] = useState<number>(() => loadValidatedState<boolean>('club_tutorial_complete', false, (v: any): v is boolean => typeof v === 'boolean') ? -1 : 0);
 
+    // Undo/Redo functionality
+    const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
+    const [redoStack, setRedoStack] = useState<UndoAction[]>([]);
+
+    // History search and filters
+    const [historySearchTerm, setHistorySearchTerm] = useState('');
+    const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+    const [editingNoteText, setEditingNoteText] = useState('');
+
+    // Alerts
+    const [thresholdAlert, setThresholdAlert] = useState<string | null>(null);
+    const [restoreMessage, setRestoreMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+    // Payment state
+    const [paymentProcessing, setPaymentProcessing] = useState(false);
+    const [paymentError, setPaymentError] = useState<string | null>(null);
+
     const settingsModalRef = useRef<HTMLDivElement>(null);
     const historyModalRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const capacityReachedSound = useRef<HTMLAudioElement | null>(null);
     const uiClickSound = useRef<HTMLAudioElement | null>(null);
@@ -470,8 +616,19 @@ const App: React.FC = () => {
         localStorage.setItem('club_theme', JSON.stringify(theme));
         localStorage.setItem('club_language', JSON.stringify(language));
         localStorage.setItem('club_settings', JSON.stringify(settings));
+        localStorage.setItem('club_subscription', JSON.stringify(subscription));
         localStorage.setItem('club_tutorial_complete', JSON.stringify(tutorialStep === -1));
-    }, [counts, log, maxCapacity, theme, language, settings, tutorialStep]);
+    }, [counts, log, maxCapacity, theme, language, settings, subscription, tutorialStep]);
+
+    // Premium feature check
+    const isPremium = useMemo(() => subscription.tier === 'premium' && subscription.isActive, [subscription]);
+
+    // Free tier log truncation
+    useEffect(() => {
+        if (!isPremium && log.length > 50) {
+            setLog(prevLog => prevLog.slice(0, 50));
+        }
+    }, [isPremium, log.length]);
 
     useEffect(() => {
         document.documentElement.lang = language;
@@ -507,43 +664,306 @@ const App: React.FC = () => {
         }
     }, [capacityReached, settings.tones]);
 
+    // Capacity thresholds monitoring
+    useEffect(() => {
+        if (maxCapacity === 0) return;
+        const percentage = (totalGuests / maxCapacity) * 100;
+
+        settings.advanced.capacityThresholds.forEach((threshold, index) => {
+            if (threshold.enabled && percentage >= threshold.percentage && !threshold.notified) {
+                let alertKey: 'capacityAlert50' | 'capacityAlert75' | 'capacityAlert90' = 'capacityAlert50';
+                if (threshold.percentage === 75) alertKey = 'capacityAlert75';
+                if (threshold.percentage === 90) alertKey = 'capacityAlert90';
+
+                setThresholdAlert(t(alertKey));
+                playSound(capacityReachedSound, settings.tones, 'alert');
+
+                // Mark as notified
+                setSettings(prev => ({
+                    ...prev,
+                    advanced: {
+                        ...prev.advanced,
+                        capacityThresholds: prev.advanced.capacityThresholds.map((th, i) =>
+                            i === index ? { ...th, notified: true } : th
+                        ),
+                    },
+                }));
+
+                setTimeout(() => setThresholdAlert(null), 4000);
+            } else if (percentage < threshold.percentage && threshold.notified) {
+                // Reset notification flag when below threshold
+                setSettings(prev => ({
+                    ...prev,
+                    advanced: {
+                        ...prev.advanced,
+                        capacityThresholds: prev.advanced.capacityThresholds.map((th, i) =>
+                            i === index ? { ...th, notified: false } : th
+                        ),
+                    },
+                }));
+            }
+        });
+    }, [totalGuests, maxCapacity, settings, t]);
+
+    // Data retention - auto-delete old logs
+    useEffect(() => {
+        if (settings.advanced.dataRetentionDays > 0) {
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - settings.advanced.dataRetentionDays);
+
+            setLog(prevLog => prevLog.filter(entry => entry.timestamp >= cutoffDate));
+        }
+    }, [settings.advanced.dataRetentionDays]);
+
+    // Auto-hide restore message
+    useEffect(() => {
+        if (restoreMessage) {
+            const timer = setTimeout(() => setRestoreMessage(null), 4000);
+            return () => clearTimeout(timer);
+        }
+    }, [restoreMessage]);
+
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
+            // Escape to close modals
             if (event.key === 'Escape') {
                 setIsSettingsOpen(false);
                 setIsHistoryOpen(false);
                 setIsAnalyticsOpen(false);
+                setEditingNoteId(null);
+            }
+
+            // Ctrl/Cmd shortcuts
+            if ((event.ctrlKey || event.metaKey) && !isSettingsOpen && !isHistoryOpen && !isAnalyticsOpen) {
+                if (event.key === 'z' && !event.shiftKey) {
+                    event.preventDefault();
+                    handleUndo();
+                } else if (event.key === 'y' || (event.key === 'z' && event.shiftKey)) {
+                    event.preventDefault();
+                    handleRedo();
+                }
+            }
+
+            // Single key shortcuts (when no modal is open and not typing)
+            if (!isSettingsOpen && !isHistoryOpen && !isAnalyticsOpen &&
+                !(event.target instanceof HTMLInputElement) &&
+                !(event.target instanceof HTMLTextAreaElement)) {
+                if (event.key.toLowerCase() === 's') {
+                    event.preventDefault();
+                    setIsSettingsOpen(true);
+                } else if (event.key.toLowerCase() === 'a') {
+                    event.preventDefault();
+                    setIsAnalyticsOpen(true);
+                } else if (event.key.toLowerCase() === 'h') {
+                    event.preventDefault();
+                    setIsHistoryOpen(true);
+                }
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, []);
+    }, [isSettingsOpen, isHistoryOpen, isAnalyticsOpen, undoStack, redoStack]);
     
     
     // ========= HANDLER-FUNKTIONEN ========= //
     
-    const handleLog = useCallback((gender: Gender, action: 'in' | 'out') => {
+    const handleLog = useCallback((gender: Gender, action: 'in' | 'out'): number => {
+        let entryId = 0;
         setLog(prevLog => {
             const newEntry: LogEntry = { id: Date.now(), timestamp: new Date(), action, gender };
+            entryId = newEntry.id;
             return [newEntry, ...prevLog];
         });
+        return entryId;
     }, []);
 
     const handleIn = useCallback((gender: Gender) => {
         if (capacityReached) return;
+        const logEntryId = handleLog(gender, 'in');
         setCounts(prev => ({ ...prev, [gender]: prev[gender] + 1 }));
-        handleLog(gender, 'in');
         playSound(guestInSound, settings.tones, 'guestIn');
+
+        // Add to undo stack
+        setUndoStack(prev => [...prev, {
+            type: 'counter',
+            gender,
+            action: 'in',
+            timestamp: new Date(),
+            logEntryId,
+        }]);
+        setRedoStack([]); // Clear redo stack on new action
     }, [handleLog, settings.tones, capacityReached]);
 
     const handleOut = useCallback((gender: Gender) => {
         setCounts(prev => {
             if (prev[gender] <= 0) return prev;
-            handleLog(gender, 'out');
+            const logEntryId = handleLog(gender, 'out');
             playSound(guestOutSound, settings.tones, 'guestOut');
+
+            // Add to undo stack
+            setUndoStack(prevStack => [...prevStack, {
+                type: 'counter',
+                gender,
+                action: 'out',
+                timestamp: new Date(),
+                logEntryId,
+            }]);
+            setRedoStack([]); // Clear redo stack on new action
+
             return { ...prev, [gender]: prev[gender] - 1 };
         });
     }, [handleLog, settings.tones]);
+
+    const handleUndo = useCallback(() => {
+        if (undoStack.length === 0) return;
+
+        const lastAction = undoStack[undoStack.length - 1];
+        setUndoStack(prev => prev.slice(0, -1));
+        setRedoStack(prev => [...prev, lastAction]);
+
+        // Reverse the action
+        if (lastAction.action === 'in') {
+            setCounts(prev => ({ ...prev, [lastAction.gender]: Math.max(0, prev[lastAction.gender] - 1) }));
+        } else {
+            setCounts(prev => ({ ...prev, [lastAction.gender]: prev[lastAction.gender] + 1 }));
+        }
+
+        // Remove the log entry
+        setLog(prev => prev.filter(entry => entry.id !== lastAction.logEntryId));
+    }, [undoStack]);
+
+    const handleRedo = useCallback(() => {
+        if (redoStack.length === 0) return;
+
+        const actionToRedo = redoStack[redoStack.length - 1];
+        setRedoStack(prev => prev.slice(0, -1));
+        setUndoStack(prev => [...prev, actionToRedo]);
+
+        // Redo the action
+        if (actionToRedo.action === 'in') {
+            setCounts(prev => ({ ...prev, [actionToRedo.gender]: prev[actionToRedo.gender] + 1 }));
+        } else {
+            setCounts(prev => ({ ...prev, [actionToRedo.gender]: Math.max(0, prev[actionToRedo.gender] - 1) }));
+        }
+
+        // Re-add the log entry
+        const newEntry: LogEntry = {
+            id: actionToRedo.logEntryId,
+            timestamp: actionToRedo.timestamp,
+            action: actionToRedo.action,
+            gender: actionToRedo.gender,
+        };
+        setLog(prev => [newEntry, ...prev].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
+    }, [redoStack]);
+
+    const handleBackup = useCallback(() => {
+        downloadBackup(counts, log, settings, maxCapacity, theme, language);
+    }, [counts, log, settings, maxCapacity, theme, language]);
+
+    const handleRestore = useCallback(() => {
+        fileInputRef.current?.click();
+    }, []);
+
+    const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        restoreFromBackup(
+            file,
+            (data) => {
+                setCounts(data.counts);
+                setLog(data.log);
+                setSettings(data.settings);
+                setMaxCapacity(data.maxCapacity);
+                setTheme(data.theme);
+                setLanguage(data.language);
+                setRestoreMessage({ type: 'success', text: t('restoreSuccess') });
+            },
+            () => {
+                setRestoreMessage({ type: 'error', text: t('restoreError') });
+            }
+        );
+
+        // Reset input
+        event.target.value = '';
+    }, [t]);
+
+    const handleSaveNote = useCallback((entryId: number, note: string) => {
+        setLog(prev => prev.map(entry =>
+            entry.id === entryId ? { ...entry, note: note || undefined } : entry
+        ));
+        setEditingNoteId(null);
+        setEditingNoteText('');
+    }, []);
+
+    const handleExportJson = useCallback(() => {
+        const exportData = {
+            exportDate: new Date().toISOString(),
+            history: dailyHistory,
+            log: log.map(entry => ({
+                ...entry,
+                timestamp: entry.timestamp.toISOString(),
+            })),
+            currentCounts: counts,
+            maxCapacity,
+        };
+        exportToJson(exportData, `venuepulse_export_${new Date().toISOString().split('T')[0]}.json`);
+    }, [dailyHistory, log, counts, maxCapacity]);
+
+    // Payment handlers for different payment methods
+    const handlePayment = useCallback(async (paymentMethod: 'card' | 'apple_pay' | 'google_pay' | 'paypal') => {
+        setPaymentProcessing(true);
+        setPaymentError(null);
+
+        try {
+            // PRODUCTION: Replace this with actual Stripe/PayPal API call
+            // For Card, Apple Pay, Google Pay: Use Stripe
+            // For PayPal: Use PayPal SDK or Stripe with PayPal
+            // const response = await fetch('/api/create-subscription', {
+            //     method: 'POST',
+            //     headers: { 'Content-Type': 'application/json' },
+            //     body: JSON.stringify({
+            //         paymentMethod,
+            //         priceId: 'price_XXXXX', // Your Stripe Price ID
+            //     }),
+            // });
+            // const data = await response.json();
+
+            // Mock payment processing (remove in production)
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Simulate 10% failure rate for testing
+            if (Math.random() < 0.1) {
+                throw new Error('Payment declined');
+            }
+
+            // Success - activate premium
+            const expiresAt = new Date();
+            expiresAt.setMonth(expiresAt.getMonth() + 1);
+            setSubscription({
+                tier: 'premium',
+                isActive: true,
+                expiresAt,
+            });
+            setRestoreMessage({ type: 'success', text: t('paymentSuccess') });
+            setIsSubscriptionOpen(false);
+        } catch (error) {
+            console.error('Payment error:', error);
+            setPaymentError(t('paymentError'));
+        } finally {
+            setPaymentProcessing(false);
+        }
+    }, [t]);
+
+    const handleCancelSubscription = useCallback(() => {
+        if (window.confirm(t('subscriptionCancel'))) {
+            setSubscription(prev => ({
+                ...prev,
+                isActive: false,
+            }));
+            setIsSubscriptionOpen(false);
+        }
+    }, [t]);
 
     const handleResetAllData = () => {
         if (window.confirm(t('resetConfirmation'))) {
@@ -555,12 +975,35 @@ const App: React.FC = () => {
             setSettings({
                 tones: { master: true, ui: true, guestIn: true, guestOut: true, alert: true },
                 customization: { accentColor: 'cyan', showOther: true },
+                advanced: {
+                    timeFormat: '24h',
+                    dateFormat: 'DD.MM.YYYY',
+                    dataRetentionDays: 0,
+                    capacityThresholds: [
+                        { percentage: 50, enabled: true, notified: false },
+                        { percentage: 75, enabled: true, notified: false },
+                        { percentage: 90, enabled: true, notified: false },
+                    ],
+                },
             });
+            setUndoStack([]);
+            setRedoStack([]);
             localStorage.clear();
         }
     };
 
     const sortedLog = useMemo(() => [...log].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()), [log]);
+
+    const filteredLog = useMemo(() => {
+        if (!historySearchTerm) return sortedLog;
+        const searchLower = historySearchTerm.toLowerCase();
+        return sortedLog.filter(entry =>
+            logGenderMap[entry.gender].toLowerCase().includes(searchLower) ||
+            (entry.action === 'in' ? t('logIn') : t('logOut')).toLowerCase().includes(searchLower) ||
+            entry.note?.toLowerCase().includes(searchLower) ||
+            formatTime(entry.timestamp, settings.advanced.timeFormat, currentLocale).includes(searchLower)
+        );
+    }, [sortedLog, historySearchTerm, logGenderMap, t, settings.advanced.timeFormat, currentLocale]);
     
     const tutorialSteps = useMemo(() => [
         { selector: '#total-guests-card', text: t('tutorialStep1') },
@@ -633,14 +1076,59 @@ const App: React.FC = () => {
                             <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-widest">{t('appSubtitle')}</p>
                         </div>
                      </div>
-                    
-                    <div className="flex items-center gap-4">
-                         <button onClick={() => { setIsAnalyticsOpen(true); playSound(uiClickSound, settings.tones, 'ui'); }} className="w-12 h-12 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-blue-600 dark:text-slate-300 dark:hover:text-blue-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10" aria-label={t('analyticsTitle')}>
+
+                    <div className="flex items-center gap-2 sm:gap-4">
+                         {/* Premium Badge */}
+                         {isPremium && (
+                             <div className="hidden sm:flex items-center gap-2 glass-panel px-3 py-1.5 rounded-full border border-yellow-400/50 bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20">
+                                 <svg className="w-4 h-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                                     <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                 </svg>
+                                 <span className="text-xs font-bold text-yellow-700 dark:text-yellow-300">Premium</span>
+                             </div>
+                         )}
+                         {!isPremium && (
+                             <button onClick={() => setIsSubscriptionOpen(true)} className="hidden sm:flex items-center gap-2 glass-panel px-3 py-1.5 rounded-full border border-blue-400/50 bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 hover:scale-105 transition-transform">
+                                 <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                                     <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                 </svg>
+                                 <span className="text-xs font-bold text-blue-700 dark:text-blue-300">Upgrade</span>
+                             </button>
+                         )}
+
+                         {/* Undo/Redo Buttons - Premium only */}
+                         {isPremium && (
+                         <div className="flex items-center gap-2">
+                             <button
+                                 onClick={handleUndo}
+                                 disabled={undoStack.length === 0}
+                                 className="w-10 h-10 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-orange-600 dark:text-slate-300 dark:hover:text-orange-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                                 aria-label={t('undoButton')}
+                                 title={t('shortcutUndo')}
+                             >
+                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                                 </svg>
+                             </button>
+                             <button
+                                 onClick={handleRedo}
+                                 disabled={redoStack.length === 0}
+                                 className="w-10 h-10 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-orange-600 dark:text-slate-300 dark:hover:text-orange-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                                 aria-label={t('redoButton')}
+                                 title={t('shortcutRedo')}
+                             >
+                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10H11a8 8 0 00-8 8v2m18-10l-6 6m6-6l-6-6" />
+                                 </svg>
+                             </button>
+                         </div>
+                         )}
+                         <button onClick={() => { setIsAnalyticsOpen(true); playSound(uiClickSound, settings.tones, 'ui'); }} className="w-12 h-12 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-blue-600 dark:text-slate-300 dark:hover:text-blue-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10" aria-label={t('analyticsTitle')} title={t('shortcutAnalytics')}>
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                             </svg>
                          </button>
-                        <button id="settings-button" onClick={() => { setIsSettingsOpen(true); playSound(uiClickSound, settings.tones, 'ui'); }} className="w-12 h-12 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-purple-600 dark:text-slate-300 dark:hover:text-purple-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10" aria-label={t('settingsTitle')} aria-haspopup="true" aria-expanded={isSettingsOpen}>
+                        <button id="settings-button" onClick={() => { setIsSettingsOpen(true); playSound(uiClickSound, settings.tones, 'ui'); }} className="w-12 h-12 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-purple-600 dark:text-slate-300 dark:hover:text-purple-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10" aria-label={t('settingsTitle')} aria-haspopup="true" aria-expanded={isSettingsOpen} title={t('shortcutSettings')}>
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -711,23 +1199,70 @@ const App: React.FC = () => {
                             <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-24 w-24" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
                             </div>
-                            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
+                            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                                 {t('activityLogTitle')}
                             </h3>
+                            {/* Search Input */}
+                            <div className="mb-4">
+                                <input
+                                    type="text"
+                                    placeholder={t('searchPlaceholder')}
+                                    value={historySearchTerm}
+                                    onChange={(e) => setHistorySearchTerm(e.target.value)}
+                                    className="w-full bg-white/60 dark:bg-black/20 rounded-xl p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800 dark:text-white placeholder-slate-400"
+                                />
+                            </div>
                             <div className="overflow-y-auto pr-2 flex-1 space-y-3 mask-image-linear-gradient-to-b scroll-smooth">
-                                {sortedLog.length > 0 ? sortedLog.map(entry => (
-                                    <div key={entry.id} className="flex justify-between items-center p-3 rounded-xl bg-white/60 dark:bg-black/20 hover:bg-white/80 dark:hover:bg-white/10 transition-colors group border border-white/40 dark:border-transparent">
-                                        <span className="font-mono text-xs text-slate-500 dark:text-slate-400 opacity-70 group-hover:opacity-100 transition-opacity">{new Date(entry.timestamp).toLocaleTimeString(currentLocale, { hour: '2-digit', minute: '2-digit' })}</span>
-                                        <div className="flex flex-col items-end">
-                                            <span className={`text-sm font-bold ${entry.gender === Gender.Male ? 'text-blue-600 dark:text-blue-300' : entry.gender === Gender.Female ? 'text-pink-600 dark:text-pink-300' : 'text-purple-600 dark:text-purple-300'}`}>
-                                                {logGenderMap[entry.gender]}
+                                {filteredLog.length > 0 ? filteredLog.map(entry => (
+                                    <div key={entry.id} className="p-3 rounded-xl bg-white/60 dark:bg-black/20 hover:bg-white/80 dark:hover:bg-white/10 transition-colors group border border-white/40 dark:border-transparent">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <span className="font-mono text-xs text-slate-500 dark:text-slate-400 opacity-70 group-hover:opacity-100 transition-opacity">
+                                                {formatTime(entry.timestamp, settings.advanced.timeFormat, currentLocale)}
                                             </span>
-                                            <span className={`text-[10px] font-bold uppercase tracking-wider ${entry.action === 'in' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                                                {entry.action === 'in' ? t('logIn') : t('logOut')}
-                                            </span>
+                                            <div className="flex flex-col items-end">
+                                                <span className={`text-sm font-bold ${entry.gender === Gender.Male ? 'text-blue-600 dark:text-blue-300' : entry.gender === Gender.Female ? 'text-pink-600 dark:text-pink-300' : 'text-purple-600 dark:text-purple-300'}`}>
+                                                    {logGenderMap[entry.gender]}
+                                                </span>
+                                                <span className={`text-[10px] font-bold uppercase tracking-wider ${entry.action === 'in' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                                                    {entry.action === 'in' ? t('logIn') : t('logOut')}
+                                                </span>
+                                            </div>
                                         </div>
+                                        {entry.note && editingNoteId !== entry.id && (
+                                            <div className="text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/50 p-2 rounded-lg mt-2">
+                                                {entry.note}
+                                            </div>
+                                        )}
+                                        {editingNoteId === entry.id ? (
+                                            <div className="mt-2 space-y-2">
+                                                <textarea
+                                                    value={editingNoteText}
+                                                    onChange={(e) => setEditingNoteText(e.target.value)}
+                                                    placeholder={t('notePlaceholder')}
+                                                    className="w-full bg-white dark:bg-slate-800 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-slate-800 dark:text-white"
+                                                    rows={2}
+                                                    autoFocus
+                                                />
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => handleSaveNote(entry.id, editingNoteText)} className="text-xs px-3 py-1 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
+                                                        {t('saveNoteButton')}
+                                                    </button>
+                                                    <button onClick={() => { setEditingNoteId(null); setEditingNoteText(''); }} className="text-xs px-3 py-1 bg-slate-300 dark:bg-slate-600 text-slate-800 dark:text-white rounded-lg hover:bg-slate-400 dark:hover:bg-slate-500 transition-colors">
+                                                        {t('cancelNoteButton')}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <button onClick={() => { setEditingNoteId(entry.id); setEditingNoteText(entry.note || ''); }} className="text-[10px] text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                {entry.note ? t('editNoteLabel') : t('addNoteLabel')}
+                                            </button>
+                                        )}
                                     </div>
-                                )) : (
+                                )) : sortedLog.length > 0 ? (
+                                    <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
+                                        <p className="text-sm">No results found</p>
+                                    </div>
+                                ) : (
                                     <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
                                         <div className="w-12 h-12 rounded-full bg-slate-200/50 dark:bg-slate-700/50 flex items-center justify-center">
                                             <svg className="w-6 h-6 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -739,6 +1274,35 @@ const App: React.FC = () => {
                         </div>
                     </div>
                 </main>
+
+                {/* Hidden file input for restore */}
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json"
+                    onChange={handleFileChange}
+                    className="hidden"
+                />
+
+                {/* Capacity threshold alerts */}
+                {thresholdAlert && (
+                    <div className="fixed top-8 left-1/2 transform -translate-x-1/2 glass-panel bg-amber-500/90 dark:bg-amber-600/90 border-amber-400 text-white font-bold px-8 py-4 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl animate-in fade-in slide-in-from-top-4">
+                         <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        {thresholdAlert}
+                    </div>
+                )}
+
+                {/* Restore success/error messages */}
+                {restoreMessage && (
+                    <div className={`fixed top-8 left-1/2 transform -translate-x-1/2 glass-panel ${restoreMessage.type === 'success' ? 'bg-emerald-500/90 dark:bg-emerald-600/90 border-emerald-400' : 'bg-rose-500/90 dark:bg-rose-600/90 border-rose-400'} text-white font-bold px-8 py-4 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl animate-in fade-in slide-in-from-top-4`}>
+                         {restoreMessage.type === 'success' ? (
+                             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                         ) : (
+                             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                         )}
+                        {restoreMessage.text}
+                    </div>
+                )}
 
                 {showCapacityAlert && (
                     <div className="capacity-alert fixed top-8 left-1/2 transform -translate-x-1/2 glass-panel bg-rose-500/90 dark:bg-rose-600/90 border-rose-400 text-white font-bold px-8 py-4 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl">
@@ -856,6 +1420,90 @@ const App: React.FC = () => {
                                      </div>
                                  </div>
 
+                                {/* Time & Date */}
+                                <div className="space-y-4">
+                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('sectionTimeDate')}</h3>
+                                    <div className="bg-white/60 dark:bg-black/20 p-6 rounded-3xl space-y-6 border border-white/40 dark:border-white/5">
+                                        <div className="flex items-center justify-between">
+                                            <span className="font-medium text-slate-700 dark:text-slate-200">{t('timeFormatLabel')}</span>
+                                            <div className="flex gap-2">
+                                                {(['12h', '24h'] as TimeFormat[]).map(fmt => (
+                                                    <button key={fmt} onClick={() => setSettings(s => ({...s, advanced: {...s.advanced, timeFormat: fmt}}))} className={`px-4 py-2 text-sm font-semibold rounded-xl transition-all ${settings.advanced.timeFormat === fmt ? 'bg-blue-500 text-white shadow-lg' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600'}`}>
+                                                        {t(fmt === '12h' ? 'timeFormat12h' : 'timeFormat24h')}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center justify-between pt-4 border-t border-slate-200/50 dark:border-white/5">
+                                            <span className="font-medium text-slate-700 dark:text-slate-200">{t('dateFormatLabel')}</span>
+                                            <select value={settings.advanced.dateFormat} onChange={(e) => setSettings(s => ({...s, advanced: {...s.advanced, dateFormat: e.target.value as DateFormat}}))} className="bg-white dark:bg-slate-800/50 rounded-xl p-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800 dark:text-white">
+                                                <option value="DD.MM.YYYY">DD.MM.YYYY</option>
+                                                <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                                                <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Capacity Thresholds */}
+                                <div className="space-y-4">
+                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('sectionCapacityThresholds')}</h3>
+                                    <div className="bg-white/60 dark:bg-black/20 p-6 rounded-3xl space-y-4 border border-white/40 dark:border-white/5">
+                                        {settings.advanced.capacityThresholds.map((threshold, index) => (
+                                            <div key={threshold.percentage} className="flex items-center justify-between">
+                                                <label htmlFor={`threshold-${threshold.percentage}`} className="font-medium text-slate-700 dark:text-slate-200">{t('thresholdEnabled', {percentage: threshold.percentage.toString()})}</label>
+                                                <button onClick={() => setSettings(s => ({...s, advanced: {...s.advanced, capacityThresholds: s.advanced.capacityThresholds.map((th, i) => i === index ? {...th, enabled: !th.enabled, notified: false} : th)}}))} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${threshold.enabled ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'}`} role="switch" aria-checked={threshold.enabled} id={`threshold-${threshold.percentage}`}>
+                                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${threshold.enabled ? 'translate-x-6' : 'translate-x-1'}`}/>
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Data Management */}
+                                <div className="space-y-4">
+                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('sectionDataManagement')}</h3>
+                                    <div className="bg-white/60 dark:bg-black/20 p-6 rounded-3xl space-y-4 border border-white/40 dark:border-white/5">
+                                        <div className="flex items-center justify-between">
+                                            <label htmlFor="data-retention" className="font-medium text-slate-700 dark:text-slate-200">{t('dataRetentionLabel')}</label>
+                                            <select id="data-retention" value={settings.advanced.dataRetentionDays} onChange={(e) => setSettings(s => ({...s, advanced: {...s.advanced, dataRetentionDays: parseInt(e.target.value)}}))} className="bg-white dark:bg-slate-800/50 rounded-xl p-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800 dark:text-white">
+                                                <option value="0">{t('dataRetentionNever')}</option>
+                                                <option value="7">{t('dataRetentionDays', {days: '7'})}</option>
+                                                <option value="30">{t('dataRetentionDays', {days: '30'})}</option>
+                                                <option value="90">{t('dataRetentionDays', {days: '90'})}</option>
+                                                <option value="365">{t('dataRetentionDays', {days: '365'})}</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Backup & Restore */}
+                                <div className="space-y-4">
+                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('sectionBackupRestore')}</h3>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <button onClick={handleBackup} className="p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 hover:bg-white/80 dark:hover:bg-slate-700/60 font-semibold text-slate-800 dark:text-white transition-colors text-left flex items-center justify-between group border border-white/40 dark:border-transparent">
+                                            {t('backupButton')}
+                                            <svg className="w-5 h-5 text-slate-400 group-hover:translate-y-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                        </button>
+                                        <button onClick={handleRestore} className="p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 hover:bg-white/80 dark:hover:bg-slate-700/60 font-semibold text-slate-800 dark:text-white transition-colors text-left flex items-center justify-between group border border-white/40 dark:border-transparent">
+                                            {t('restoreButton')}
+                                            <svg className="w-5 h-5 text-slate-400 group-hover:-translate-y-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Keyboard Shortcuts Info */}
+                                <div className="space-y-4">
+                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('sectionKeyboardShortcuts')}</h3>
+                                    <div className="bg-white/60 dark:bg-black/20 p-6 rounded-3xl space-y-2 border border-white/40 dark:border-white/5 text-sm text-slate-600 dark:text-slate-300">
+                                        <p>{t('shortcutUndo')}</p>
+                                        <p>{t('shortcutRedo')}</p>
+                                        <p>{t('shortcutSettings')}</p>
+                                        <p>{t('shortcutAnalytics')}</p>
+                                        <p>{t('shortcutHistory')}</p>
+                                    </div>
+                                </div>
+
                                 {/* Actions */}
                                 <div className="space-y-4">
                                     <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('sectionAdvanced')}</h3>
@@ -866,6 +1514,10 @@ const App: React.FC = () => {
                                         </button>
                                         <button onClick={() => exportToCsv(dailyHistory, csvHeaders, `venuepulse_history_${new Date().toISOString().split('T')[0]}.csv`)} disabled={!dailyHistory.length} className="p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 hover:bg-white/80 dark:hover:bg-slate-700/60 font-semibold text-slate-800 dark:text-white transition-colors text-left flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed group border border-white/40 dark:border-transparent">
                                             {t('exportHistoryButton')}
+                                            <svg className="w-5 h-5 text-slate-400 group-hover:translate-y-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                        </button>
+                                        <button onClick={handleExportJson} disabled={!log.length} className="p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 hover:bg-white/80 dark:hover:bg-slate-700/60 font-semibold text-slate-800 dark:text-white transition-colors text-left flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed group border border-white/40 dark:border-transparent">
+                                            {t('exportJsonButton')}
                                             <svg className="w-5 h-5 text-slate-400 group-hover:translate-y-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                                         </button>
                                         <button onClick={() => setTutorialStep(0)} className="p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 hover:bg-white/80 dark:hover:bg-slate-700/60 font-semibold text-slate-800 dark:text-white transition-colors text-left border border-white/40 dark:border-transparent">
@@ -926,6 +1578,149 @@ const App: React.FC = () => {
                         </div>
                      </div>
                  </div>
+            )}
+
+            {/* Subscription Modal */}
+            {isSubscriptionOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+                    <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-xl" onClick={() => setIsSubscriptionOpen(false)}></div>
+                    <div className="relative w-full max-w-2xl glass-panel rounded-[2.5rem] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-300 border-white/60 dark:border-white/10" onClick={e => e.stopPropagation()}>
+                        <div className="p-8 overflow-y-auto custom-scrollbar bg-white/40 dark:bg-transparent">
+                            <div className="flex justify-between items-center mb-8">
+                                <h2 className="text-3xl font-bold text-slate-800 dark:text-white tracking-tight">{t('subscriptionTitle')}</h2>
+                                <button onClick={() => setIsSubscriptionOpen(false)} className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors" aria-label={t('close')}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-slate-500 dark:text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+
+                            {/* Current Plan */}
+                            <div className="mb-8 p-6 rounded-3xl bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border border-blue-200/50 dark:border-blue-800/50">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-lg font-bold text-slate-800 dark:text-white">{t('subscriptionCurrentPlan')}</h3>
+                                    <div className={`px-4 py-2 rounded-full font-bold text-sm ${isPremium ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'}`}>
+                                        {isPremium ? t('subscriptionPremium') : t('subscriptionFree')}
+                                    </div>
+                                </div>
+                                {isPremium ? (
+                                    <p className="text-slate-600 dark:text-slate-300">{t('subscriptionThankYou')}</p>
+                                ) : (
+                                    <p className="text-slate-600 dark:text-slate-300">{t('subscriptionFreeLimit')}</p>
+                                )}
+                            </div>
+
+                            {/* Premium Features */}
+                            <div className="mb-8">
+                                <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-6">{t('subscriptionFeatureTitle')}</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
+                                        <div key={i} className="flex items-center gap-3 p-4 rounded-2xl bg-white/60 dark:bg-black/20 border border-white/40 dark:border-white/5">
+                                            <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                            </svg>
+                                            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{t(`subscriptionFeature${i}` as any)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Pricing */}
+                            <div className="mb-8 p-8 rounded-3xl bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border-2 border-purple-200 dark:border-purple-800 text-center">
+                                <div className="mb-4">
+                                    <span className="text-5xl font-bold text-slate-800 dark:text-white">12 CHF</span>
+                                    <span className="text-xl text-slate-600 dark:text-slate-300 ml-2">/ {t('subscriptionPrice').split('/')[1]}</span>
+                                </div>
+                                <p className="text-sm text-slate-600 dark:text-slate-400">{t('subscriptionUpgradePrompt')}</p>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="space-y-4">
+                                {!isPremium ? (
+                                    <>
+                                        {/* Payment Method Selection */}
+                                        <div className="space-y-3">
+                                            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-center mb-4">{t('paymentMethodTitle')}</h4>
+
+                                            {/* Credit Card */}
+                                            <button
+                                                onClick={() => handlePayment('card')}
+                                                disabled={paymentProcessing}
+                                                className="w-full p-4 rounded-2xl bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:from-slate-400 disabled:to-slate-500 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M20 4H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z"/>
+                                                </svg>
+                                                {paymentProcessing ? t('paymentProcessing') : t('paymentCreditCard')}
+                                            </button>
+
+                                            {/* Apple Pay */}
+                                            <button
+                                                onClick={() => handlePayment('apple_pay')}
+                                                disabled={paymentProcessing}
+                                                className="w-full p-4 rounded-2xl bg-black hover:bg-slate-800 disabled:bg-slate-500 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+                                                </svg>
+                                                {paymentProcessing ? t('paymentProcessing') : t('paymentApplePay')}
+                                            </button>
+
+                                            {/* Google Pay */}
+                                            <button
+                                                onClick={() => handlePayment('google_pay')}
+                                                disabled={paymentProcessing}
+                                                className="w-full p-4 rounded-2xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:bg-slate-300 dark:disabled:bg-slate-600 border-2 border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                <svg className="w-6 h-6" viewBox="0 0 24 24">
+                                                    <path fill="#EA4335" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/>
+                                                </svg>
+                                                {paymentProcessing ? t('paymentProcessing') : t('paymentGooglePay')}
+                                            </button>
+
+                                            {/* PayPal */}
+                                            <button
+                                                onClick={() => handlePayment('paypal')}
+                                                disabled={paymentProcessing}
+                                                className="w-full p-4 rounded-2xl bg-[#0070ba] hover:bg-[#005ea6] disabled:bg-slate-500 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                                                    <path d="M20.067 8.478c.492.88.556 2.014.3 3.327-.74 3.806-3.276 5.12-6.514 5.12h-.5a.805.805 0 00-.794.683l-.844 5.346a.683.683 0 01-.675.58h-3.46a.397.397 0 01-.393-.458l1.498-9.5h-.001l.33-2.09a.8.8 0 01.791-.683h2.41c3.242 0 5.704-.858 6.848-4.015.087.213.168.436.238.67.25.84.37 1.713.366 2.59a.72.72 0 01.001.43z"/>
+                                                    <path d="M8.715 2.607h6.376c1.018 0 1.936.202 2.653.642.848.52 1.4 1.35 1.645 2.47.07.315.11.643.117.977a7.428 7.428 0 01-.117 1.784c-.074.387-.186.76-.335 1.117-1.144 3.157-3.606 4.015-6.848 4.015h-2.41a.8.8 0 00-.791.683l-.33 2.09-.844 5.346a.397.397 0 01-.393.337h-3.46a.683.683 0 01-.675-.796L4.812 5.945a1.353 1.353 0 011.337-1.152h2.566z"/>
+                                                </svg>
+                                                {paymentProcessing ? t('paymentProcessing') : t('paymentPayPal')}
+                                            </button>
+                                        </div>
+
+                                        {/* Payment Error */}
+                                        {paymentError && (
+                                            <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-center">
+                                                <p className="text-sm font-medium text-rose-700 dark:text-rose-300">{paymentError}</p>
+                                            </div>
+                                        )}
+
+                                        {/* Secure Payment Badge */}
+                                        <div className="flex items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400 pt-2">
+                                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                                            </svg>
+                                            <span>{t('paymentSecure')}</span>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="p-4 rounded-2xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-center">
+                                            <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                                                {subscription.expiresAt && `Valid until ${subscription.expiresAt.toLocaleDateString(currentLocale)}`}
+                                            </p>
+                                        </div>
+                                        <button onClick={handleCancelSubscription} className="w-full p-4 rounded-2xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold transition-all">
+                                            {t('subscriptionCancel')}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             )}
         </>
     );
