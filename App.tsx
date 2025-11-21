@@ -911,12 +911,14 @@ const App: React.FC = () => {
     }, [dailyHistory, log, counts, maxCapacity]);
 
     // Payment handlers for different payment methods
-    const handlePayment = useCallback(async (paymentMethod: 'card' | 'apple_pay' | 'google_pay') => {
+    const handlePayment = useCallback(async (paymentMethod: 'card' | 'apple_pay' | 'google_pay' | 'paypal') => {
         setPaymentProcessing(true);
         setPaymentError(null);
 
         try {
-            // PRODUCTION: Replace this with actual Stripe API call
+            // PRODUCTION: Replace this with actual Stripe/PayPal API call
+            // For Card, Apple Pay, Google Pay: Use Stripe
+            // For PayPal: Use PayPal SDK or Stripe with PayPal
             // const response = await fetch('/api/create-subscription', {
             //     method: 'POST',
             //     headers: { 'Content-Type': 'application/json' },
@@ -1672,6 +1674,19 @@ const App: React.FC = () => {
                                                     <path fill="#EA4335" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/>
                                                 </svg>
                                                 {paymentProcessing ? t('paymentProcessing') : t('paymentGooglePay')}
+                                            </button>
+
+                                            {/* PayPal */}
+                                            <button
+                                                onClick={() => handlePayment('paypal')}
+                                                disabled={paymentProcessing}
+                                                className="w-full p-4 rounded-2xl bg-[#0070ba] hover:bg-[#005ea6] disabled:bg-slate-500 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                                                    <path d="M20.067 8.478c.492.88.556 2.014.3 3.327-.74 3.806-3.276 5.12-6.514 5.12h-.5a.805.805 0 00-.794.683l-.844 5.346a.683.683 0 01-.675.58h-3.46a.397.397 0 01-.393-.458l1.498-9.5h-.001l.33-2.09a.8.8 0 01.791-.683h2.41c3.242 0 5.704-.858 6.848-4.015.087.213.168.436.238.67.25.84.37 1.713.366 2.59a.72.72 0 01.001.43z"/>
+                                                    <path d="M8.715 2.607h6.376c1.018 0 1.936.202 2.653.642.848.52 1.4 1.35 1.645 2.47.07.315.11.643.117.977a7.428 7.428 0 01-.117 1.784c-.074.387-.186.76-.335 1.117-1.144 3.157-3.606 4.015-6.848 4.015h-2.41a.8.8 0 00-.791.683l-.33 2.09-.844 5.346a.397.397 0 01-.393.337h-3.46a.683.683 0 01-.675-.796L4.812 5.945a1.353 1.353 0 011.337-1.152h2.566z"/>
+                                                </svg>
+                                                {paymentProcessing ? t('paymentProcessing') : t('paymentPayPal')}
                                             </button>
                                         </div>
 
