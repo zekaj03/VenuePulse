@@ -564,6 +564,10 @@ const App: React.FC = () => {
     const [thresholdAlert, setThresholdAlert] = useState<string | null>(null);
     const [restoreMessage, setRestoreMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
+    // Payment state
+    const [paymentProcessing, setPaymentProcessing] = useState(false);
+    const [paymentError, setPaymentError] = useState<string | null>(null);
+
     const settingsModalRef = useRef<HTMLDivElement>(null);
     const historyModalRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -906,17 +910,47 @@ const App: React.FC = () => {
         exportToJson(exportData, `venuepulse_export_${new Date().toISOString().split('T')[0]}.json`);
     }, [dailyHistory, log, counts, maxCapacity]);
 
-    const handleUpgradeToPremium = useCallback(() => {
-        // Mock payment - in production this would trigger a real payment flow
-        const expiresAt = new Date();
-        expiresAt.setMonth(expiresAt.getMonth() + 1);
-        setSubscription({
-            tier: 'premium',
-            isActive: true,
-            expiresAt,
-        });
-        setRestoreMessage({ type: 'success', text: t('subscriptionActivated') });
-        setIsSubscriptionOpen(false);
+    // Payment handlers for different payment methods
+    const handlePayment = useCallback(async (paymentMethod: 'card' | 'apple_pay' | 'google_pay') => {
+        setPaymentProcessing(true);
+        setPaymentError(null);
+
+        try {
+            // PRODUCTION: Replace this with actual Stripe API call
+            // const response = await fetch('/api/create-subscription', {
+            //     method: 'POST',
+            //     headers: { 'Content-Type': 'application/json' },
+            //     body: JSON.stringify({
+            //         paymentMethod,
+            //         priceId: 'price_XXXXX', // Your Stripe Price ID
+            //     }),
+            // });
+            // const data = await response.json();
+
+            // Mock payment processing (remove in production)
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Simulate 10% failure rate for testing
+            if (Math.random() < 0.1) {
+                throw new Error('Payment declined');
+            }
+
+            // Success - activate premium
+            const expiresAt = new Date();
+            expiresAt.setMonth(expiresAt.getMonth() + 1);
+            setSubscription({
+                tier: 'premium',
+                isActive: true,
+                expiresAt,
+            });
+            setRestoreMessage({ type: 'success', text: t('paymentSuccess') });
+            setIsSubscriptionOpen(false);
+        } catch (error) {
+            console.error('Payment error:', error);
+            setPaymentError(t('paymentError'));
+        } finally {
+            setPaymentProcessing(false);
+        }
     }, [t]);
 
     const handleCancelSubscription = useCallback(() => {
@@ -1599,9 +1633,63 @@ const App: React.FC = () => {
                             {/* Actions */}
                             <div className="space-y-4">
                                 {!isPremium ? (
-                                    <button onClick={handleUpgradeToPremium} className="w-full p-4 rounded-2xl bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg">
-                                        {t('subscriptionUpgrade')}
-                                    </button>
+                                    <>
+                                        {/* Payment Method Selection */}
+                                        <div className="space-y-3">
+                                            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-center mb-4">{t('paymentMethodTitle')}</h4>
+
+                                            {/* Credit Card */}
+                                            <button
+                                                onClick={() => handlePayment('card')}
+                                                disabled={paymentProcessing}
+                                                className="w-full p-4 rounded-2xl bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:from-slate-400 disabled:to-slate-500 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M20 4H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z"/>
+                                                </svg>
+                                                {paymentProcessing ? t('paymentProcessing') : t('paymentCreditCard')}
+                                            </button>
+
+                                            {/* Apple Pay */}
+                                            <button
+                                                onClick={() => handlePayment('apple_pay')}
+                                                disabled={paymentProcessing}
+                                                className="w-full p-4 rounded-2xl bg-black hover:bg-slate-800 disabled:bg-slate-500 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+                                                </svg>
+                                                {paymentProcessing ? t('paymentProcessing') : t('paymentApplePay')}
+                                            </button>
+
+                                            {/* Google Pay */}
+                                            <button
+                                                onClick={() => handlePayment('google_pay')}
+                                                disabled={paymentProcessing}
+                                                className="w-full p-4 rounded-2xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:bg-slate-300 dark:disabled:bg-slate-600 border-2 border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                            >
+                                                <svg className="w-6 h-6" viewBox="0 0 24 24">
+                                                    <path fill="#EA4335" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/>
+                                                </svg>
+                                                {paymentProcessing ? t('paymentProcessing') : t('paymentGooglePay')}
+                                            </button>
+                                        </div>
+
+                                        {/* Payment Error */}
+                                        {paymentError && (
+                                            <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-center">
+                                                <p className="text-sm font-medium text-rose-700 dark:text-rose-300">{paymentError}</p>
+                                            </div>
+                                        )}
+
+                                        {/* Secure Payment Badge */}
+                                        <div className="flex items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400 pt-2">
+                                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                                            </svg>
+                                            <span>{t('paymentSecure')}</span>
+                                        </div>
+                                    </>
                                 ) : (
                                     <>
                                         <div className="p-4 rounded-2xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-center">
