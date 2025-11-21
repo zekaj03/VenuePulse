@@ -26,3 +26,11 @@ export interface UndoAction {
   timestamp: Date;
   logEntryId: number;
 }
+
+export type SubscriptionTier = 'free' | 'premium';
+
+export interface SubscriptionStatus {
+  tier: SubscriptionTier;
+  expiresAt: Date | null;
+  isActive: boolean;
+}

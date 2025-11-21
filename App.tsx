@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Gender, LogEntry, CapacityThreshold, UndoAction } from './types';
+import { Gender, LogEntry, CapacityThreshold, UndoAction, SubscriptionStatus, SubscriptionTier } from './types';
 import { languages, translations } from './locales';
 import AnalyticsDashboard from './AnalyticsDashboard';
 
@@ -52,6 +52,12 @@ const isAppSettings = (value: any): value is AppSettings =>
   isToneSettings(value.tones) &&
   isCustomizationSettings(value.customization) &&
   isAdvancedSettings(value.advanced);
+const isSubscriptionTier = (value: any): value is SubscriptionTier => ['free', 'premium'].includes(value);
+const isSubscriptionStatus = (value: any): value is SubscriptionStatus =>
+  value &&
+  isSubscriptionTier(value.tier) &&
+  typeof value.isActive === 'boolean' &&
+  (value.expiresAt === null || value.expiresAt instanceof Date);
 
 
 // ========= HELPER-FUNKTIONEN ========= //
@@ -508,6 +514,7 @@ const App: React.FC = () => {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
+    const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
     const [showCapacityAlert, setShowCapacityAlert] = useState(false);
     
     const [settings, setSettings] = useState<AppSettings>(() => loadValidatedState('club_settings', {
@@ -528,6 +535,17 @@ const App: React.FC = () => {
     const [language, setLanguage] = useState<Language>(() => {
       const savedLang = loadValidatedState('club_language', navigator.language.split('-')[0], isLanguage);
       return isLanguage(savedLang) ? savedLang : 'en';
+    });
+    const [subscription, setSubscription] = useState<SubscriptionStatus>(() => {
+        const stored = loadValidatedState('club_subscription', { tier: 'free', isActive: true, expiresAt: null }, (v: any): v is SubscriptionStatus => {
+            if (!v || !isSubscriptionTier(v.tier) || typeof v.isActive !== 'boolean') return false;
+            if (v.expiresAt !== null) {
+                v.expiresAt = new Date(v.expiresAt);
+                if (isNaN(v.expiresAt.getTime())) return false;
+            }
+            return true;
+        });
+        return stored;
     });
 
 
@@ -594,8 +612,19 @@ const App: React.FC = () => {
         localStorage.setItem('club_theme', JSON.stringify(theme));
         localStorage.setItem('club_language', JSON.stringify(language));
         localStorage.setItem('club_settings', JSON.stringify(settings));
+        localStorage.setItem('club_subscription', JSON.stringify(subscription));
         localStorage.setItem('club_tutorial_complete', JSON.stringify(tutorialStep === -1));
-    }, [counts, log, maxCapacity, theme, language, settings, tutorialStep]);
+    }, [counts, log, maxCapacity, theme, language, settings, subscription, tutorialStep]);
+
+    // Premium feature check
+    const isPremium = useMemo(() => subscription.tier === 'premium' && subscription.isActive, [subscription]);
+
+    // Free tier log truncation
+    useEffect(() => {
+        if (!isPremium && log.length > 50) {
+            setLog(prevLog => prevLog.slice(0, 50));
+        }
+    }, [isPremium, log.length]);
 
     useEffect(() => {
         document.documentElement.lang = language;
@@ -877,6 +906,29 @@ const App: React.FC = () => {
         exportToJson(exportData, `venuepulse_export_${new Date().toISOString().split('T')[0]}.json`);
     }, [dailyHistory, log, counts, maxCapacity]);
 
+    const handleUpgradeToPremium = useCallback(() => {
+        // Mock payment - in production this would trigger a real payment flow
+        const expiresAt = new Date();
+        expiresAt.setMonth(expiresAt.getMonth() + 1);
+        setSubscription({
+            tier: 'premium',
+            isActive: true,
+            expiresAt,
+        });
+        setRestoreMessage({ type: 'success', text: t('subscriptionActivated') });
+        setIsSubscriptionOpen(false);
+    }, [t]);
+
+    const handleCancelSubscription = useCallback(() => {
+        if (window.confirm(t('subscriptionCancel'))) {
+            setSubscription(prev => ({
+                ...prev,
+                isActive: false,
+            }));
+            setIsSubscriptionOpen(false);
+        }
+    }, [t]);
+
     const handleResetAllData = () => {
         if (window.confirm(t('resetConfirmation'))) {
             setCounts({ [Gender.Male]: 0, [Gender.Female]: 0, [Gender.Other]: 0 });
@@ -990,7 +1042,26 @@ const App: React.FC = () => {
                      </div>
 
                     <div className="flex items-center gap-2 sm:gap-4">
-                         {/* Undo/Redo Buttons */}
+                         {/* Premium Badge */}
+                         {isPremium && (
+                             <div className="hidden sm:flex items-center gap-2 glass-panel px-3 py-1.5 rounded-full border border-yellow-400/50 bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20">
+                                 <svg className="w-4 h-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                                     <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                 </svg>
+                                 <span className="text-xs font-bold text-yellow-700 dark:text-yellow-300">Premium</span>
+                             </div>
+                         )}
+                         {!isPremium && (
+                             <button onClick={() => setIsSubscriptionOpen(true)} className="hidden sm:flex items-center gap-2 glass-panel px-3 py-1.5 rounded-full border border-blue-400/50 bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 hover:scale-105 transition-transform">
+                                 <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                                     <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                 </svg>
+                                 <span className="text-xs font-bold text-blue-700 dark:text-blue-300">Upgrade</span>
+                             </button>
+                         )}
+
+                         {/* Undo/Redo Buttons - Premium only */}
+                         {isPremium && (
                          <div className="flex items-center gap-2">
                              <button
                                  onClick={handleUndo}
@@ -1015,6 +1086,7 @@ const App: React.FC = () => {
                                  </svg>
                              </button>
                          </div>
+                         )}
                          <button onClick={() => { setIsAnalyticsOpen(true); playSound(uiClickSound, settings.tones, 'ui'); }} className="w-12 h-12 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-blue-600 dark:text-slate-300 dark:hover:text-blue-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10" aria-label={t('analyticsTitle')} title={t('shortcutAnalytics')}>
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -1470,6 +1542,82 @@ const App: React.FC = () => {
                         </div>
                      </div>
                  </div>
+            )}
+
+            {/* Subscription Modal */}
+            {isSubscriptionOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+                    <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-xl" onClick={() => setIsSubscriptionOpen(false)}></div>
+                    <div className="relative w-full max-w-2xl glass-panel rounded-[2.5rem] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-300 border-white/60 dark:border-white/10" onClick={e => e.stopPropagation()}>
+                        <div className="p-8 overflow-y-auto custom-scrollbar bg-white/40 dark:bg-transparent">
+                            <div className="flex justify-between items-center mb-8">
+                                <h2 className="text-3xl font-bold text-slate-800 dark:text-white tracking-tight">{t('subscriptionTitle')}</h2>
+                                <button onClick={() => setIsSubscriptionOpen(false)} className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors" aria-label={t('close')}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-slate-500 dark:text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+
+                            {/* Current Plan */}
+                            <div className="mb-8 p-6 rounded-3xl bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border border-blue-200/50 dark:border-blue-800/50">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-lg font-bold text-slate-800 dark:text-white">{t('subscriptionCurrentPlan')}</h3>
+                                    <div className={`px-4 py-2 rounded-full font-bold text-sm ${isPremium ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'}`}>
+                                        {isPremium ? t('subscriptionPremium') : t('subscriptionFree')}
+                                    </div>
+                                </div>
+                                {isPremium ? (
+                                    <p className="text-slate-600 dark:text-slate-300">{t('subscriptionThankYou')}</p>
+                                ) : (
+                                    <p className="text-slate-600 dark:text-slate-300">{t('subscriptionFreeLimit')}</p>
+                                )}
+                            </div>
+
+                            {/* Premium Features */}
+                            <div className="mb-8">
+                                <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-6">{t('subscriptionFeatureTitle')}</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
+                                        <div key={i} className="flex items-center gap-3 p-4 rounded-2xl bg-white/60 dark:bg-black/20 border border-white/40 dark:border-white/5">
+                                            <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                            </svg>
+                                            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{t(`subscriptionFeature${i}` as any)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Pricing */}
+                            <div className="mb-8 p-8 rounded-3xl bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border-2 border-purple-200 dark:border-purple-800 text-center">
+                                <div className="mb-4">
+                                    <span className="text-5xl font-bold text-slate-800 dark:text-white">12 CHF</span>
+                                    <span className="text-xl text-slate-600 dark:text-slate-300 ml-2">/ {t('subscriptionPrice').split('/')[1]}</span>
+                                </div>
+                                <p className="text-sm text-slate-600 dark:text-slate-400">{t('subscriptionUpgradePrompt')}</p>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="space-y-4">
+                                {!isPremium ? (
+                                    <button onClick={handleUpgradeToPremium} className="w-full p-4 rounded-2xl bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg">
+                                        {t('subscriptionUpgrade')}
+                                    </button>
+                                ) : (
+                                    <>
+                                        <div className="p-4 rounded-2xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-center">
+                                            <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                                                {subscription.expiresAt && `Valid until ${subscription.expiresAt.toLocaleDateString(currentLocale)}`}
+                                            </p>
+                                        </div>
+                                        <button onClick={handleCancelSubscription} className="w-full p-4 rounded-2xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold transition-all">
+                                            {t('subscriptionCancel')}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             )}
         </>
     );
