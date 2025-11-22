@@ -165,12 +165,15 @@ const enTranslations = {
   subscriptionActivated: 'Premium subscription activated!',
   subscriptionCancelled: 'Subscription cancelled. Premium features available until {date}',
   subscriptionExpired: 'Your Premium subscription has expired',
-  paymentMethodTitle: 'Pay with PayPal',
-  paymentPayPal: 'PayPal',
-  paymentProcessing: 'Processing payment...',
-  paymentSuccess: 'Payment successful!',
-  paymentError: 'Payment failed. Please try again.',
-  paymentSecure: 'Secure payment powered by PayPal',
+
+  // License Key
+  licenseKeyTitle: 'Enter License Key',
+  licenseKeyDescription: 'Enter your Premium license key to unlock all features',
+  licenseKeyActivate: 'Activate License',
+  licenseKeyInvalid: 'Invalid license key. Please check and try again.',
+  licenseKeyPurchaseInfo: 'Don\'t have a license? Contact us to purchase Premium (12 CHF/month)',
+  licenseKeyContactUs: 'Contact Support',
+  licenseKeyHelp: 'License keys are validated locally and work offline',
 
   // Multi-Zone Management
   zonesTitle: 'Zones',
@@ -502,12 +505,15 @@ export const translations: { [key: string]: TranslationKeys } = {
     subscriptionActivated: 'Premium-Abo aktiviert!',
     subscriptionCancelled: 'Abo gekündigt. Premium-Features verfügbar bis {date}',
     subscriptionExpired: 'Dein Premium-Abo ist abgelaufen',
-    paymentMethodTitle: 'Mit PayPal bezahlen',
-    paymentPayPal: 'PayPal',
-    paymentProcessing: 'Zahlung wird verarbeitet...',
-    paymentSuccess: 'Zahlung erfolgreich!',
-    paymentError: 'Zahlung fehlgeschlagen. Bitte versuche es erneut.',
-    paymentSecure: 'Sichere Zahlung durch PayPal',
+
+    // License Key
+    licenseKeyTitle: 'Lizenzschlüssel eingeben',
+    licenseKeyDescription: 'Geben Sie Ihren Premium-Lizenzschlüssel ein, um alle Funktionen freizuschalten',
+    licenseKeyActivate: 'Lizenz aktivieren',
+    licenseKeyInvalid: 'Ungültiger Lizenzschlüssel. Bitte überprüfen und erneut versuchen.',
+    licenseKeyPurchaseInfo: 'Noch keine Lizenz? Kontaktieren Sie uns für Premium (12 CHF/Monat)',
+    licenseKeyContactUs: 'Support kontaktieren',
+    licenseKeyHelp: 'Lizenzschlüssel werden lokal validiert und funktionieren offline',
 
     // Multi-Zone Management
     zonesTitle: 'Bereiche',
@@ -811,12 +817,15 @@ export const translations: { [key: string]: TranslationKeys } = {
     subscriptionActivated: 'Abonnement Premium activé !',
     subscriptionCancelled: 'Abonnement annulé. Fonctionnalités Premium disponibles jusqu\'au {date}',
     subscriptionExpired: 'Votre abonnement Premium a expiré',
-    paymentMethodTitle: 'Payer avec PayPal',
-    paymentPayPal: 'PayPal',
-    paymentProcessing: 'Traitement du paiement...',
-    paymentSuccess: 'Paiement réussi !',
-    paymentError: 'Échec du paiement. Veuillez réessayer.',
-    paymentSecure: 'Paiement sécurisé par PayPal',
+
+    // License Key
+    licenseKeyTitle: 'Entrer la clé de licence',
+    licenseKeyDescription: 'Entrez votre clé de licence Premium pour déverrouiller toutes les fonctionnalités',
+    licenseKeyActivate: 'Activer la licence',
+    licenseKeyInvalid: 'Clé de licence invalide. Veuillez vérifier et réessayer.',
+    licenseKeyPurchaseInfo: 'Pas de licence ? Contactez-nous pour acheter Premium (12 CHF/mois)',
+    licenseKeyContactUs: 'Contacter le support',
+    licenseKeyHelp: 'Les clés de licence sont validées localement et fonctionnent hors ligne',
 
     // Multi-Zone Management
     zonesTitle: 'Zones',
@@ -1120,12 +1129,15 @@ export const translations: { [key: string]: TranslationKeys } = {
     subscriptionActivated: '¡Suscripción Premium activada!',
     subscriptionCancelled: 'Suscripción cancelada. Funciones Premium disponibles hasta {date}',
     subscriptionExpired: 'Tu suscripción Premium ha expirado',
-    paymentMethodTitle: 'Pagar con PayPal',
-    paymentPayPal: 'PayPal',
-    paymentProcessing: 'Procesando pago...',
-    paymentSuccess: '¡Pago exitoso!',
-    paymentError: 'Error en el pago. Por favor, inténtalo de nuevo.',
-    paymentSecure: 'Pago seguro con PayPal',
+
+    // License Key
+    licenseKeyTitle: 'Ingresar clave de licencia',
+    licenseKeyDescription: 'Ingrese su clave de licencia Premium para desbloquear todas las funciones',
+    licenseKeyActivate: 'Activar licencia',
+    licenseKeyInvalid: 'Clave de licencia inválida. Por favor, verifique e intente nuevamente.',
+    licenseKeyPurchaseInfo: '¿No tienes licencia? Contáctanos para comprar Premium (12 CHF/mes)',
+    licenseKeyContactUs: 'Contactar soporte',
+    licenseKeyHelp: 'Las claves de licencia se validan localmente y funcionan sin conexión',
 
     // Multi-Zone Management
     zonesTitle: 'Zonas',
