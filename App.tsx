@@ -859,22 +859,6 @@ const App: React.FC = () => {
         }
     }, [restoreMessage]);
 
-    // Handle payment success from Stripe redirect
-    useEffect(() => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const paymentStatus = urlParams.get('payment');
-
-        if (paymentStatus === 'success') {
-            handlePaymentSuccess();
-            // Clean up URL
-            window.history.replaceState({}, document.title, window.location.pathname);
-        } else if (paymentStatus === 'cancel') {
-            setPaymentError(t('paymentCanceled') || 'Payment was canceled');
-            // Clean up URL
-            window.history.replaceState({}, document.title, window.location.pathname);
-        }
-    }, [handlePaymentSuccess, t]);
-
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             // Escape to close modals
@@ -1115,24 +1099,6 @@ const App: React.FC = () => {
         };
         exportToJson(exportData, `venuepulse_export_${new Date().toISOString().split('T')[0]}.json`);
     }, [dailyHistory, log, counts, maxCapacity]);
-
-    // Payment success handler - called after successful Stripe payment
-    const handlePaymentSuccess = useCallback(() => {
-        // Activate premium subscription
-        const expiresAt = new Date();
-        expiresAt.setMonth(expiresAt.getMonth() + 1);
-        setSubscription({
-            tier: 'premium',
-            isActive: true,
-            expiresAt,
-        });
-        setPaymentError(null);
-        setIsSubscriptionOpen(false);
-        // Show success message
-        setTimeout(() => {
-            alert(t('paymentSuccess'));
-        }, 100);
-    }, [t]);
 
     // License key validation
     const validateLicenseKey = useCallback((key: string): boolean => {
