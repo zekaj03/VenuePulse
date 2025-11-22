@@ -859,22 +859,6 @@ const App: React.FC = () => {
         }
     }, [restoreMessage]);
 
-    // Handle payment success from Stripe redirect
-    useEffect(() => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const paymentStatus = urlParams.get('payment');
-
-        if (paymentStatus === 'success') {
-            handlePaymentSuccess();
-            // Clean up URL
-            window.history.replaceState({}, document.title, window.location.pathname);
-        } else if (paymentStatus === 'cancel') {
-            setPaymentError(t('paymentCanceled') || 'Payment was canceled');
-            // Clean up URL
-            window.history.replaceState({}, document.title, window.location.pathname);
-        }
-    }, [handlePaymentSuccess, t]);
-
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             // Escape to close modals
