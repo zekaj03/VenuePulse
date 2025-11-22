@@ -124,9 +124,57 @@ const loadValidatedState = <T,>(key: string, defaultValue: T, validator: (value:
     const storedValue = localStorage.getItem(key);
     if (storedValue === null) return defaultValue;
     const parsedValue = JSON.parse(storedValue);
+
+    // Convert date strings to Date objects for all keys
     if (key === 'club_log' && Array.isArray(parsedValue)) {
         parsedValue.forEach(entry => entry.timestamp = new Date(entry.timestamp));
     }
+    if (key === 'club_users' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(user => user.createdAt = new Date(user.createdAt));
+    }
+    if (key === 'club_shifts' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(shift => {
+            shift.startTime = new Date(shift.startTime);
+            if (shift.endTime) shift.endTime = new Date(shift.endTime);
+        });
+    }
+    if (key === 'club_audit_logs' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(log => log.timestamp = new Date(log.timestamp));
+    }
+    if (key === 'club_guests' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(guest => {
+            if (guest.checkInTime) guest.checkInTime = new Date(guest.checkInTime);
+            if (guest.checkOutTime) guest.checkOutTime = new Date(guest.checkOutTime);
+        });
+    }
+    if (key === 'club_reservations' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(res => {
+            res.reservationTime = new Date(res.reservationTime);
+            res.createdAt = new Date(res.createdAt);
+        });
+    }
+    if (key === 'club_waitlist' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(entry => entry.addedAt = new Date(entry.addedAt));
+    }
+    if (key === 'club_revenue_entries' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(entry => entry.timestamp = new Date(entry.timestamp));
+    }
+    if (key === 'club_daily_closings' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(closing => {
+            closing.date = new Date(closing.date);
+            closing.closedAt = new Date(closing.closedAt);
+        });
+    }
+    if (key === 'club_notifications' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(notif => notif.timestamp = new Date(notif.timestamp));
+    }
+    if (key === 'club_last_sync' && parsedValue) {
+        return new Date(parsedValue) as any;
+    }
+    if (key === 'club_subscription' && parsedValue?.expiresAt) {
+        parsedValue.expiresAt = new Date(parsedValue.expiresAt);
+    }
+
     return validator(parsedValue) ? parsedValue : defaultValue;
   } catch (error) {
     console.error(`Fehler beim Laden des Status für Schlüssel "${key}":`, error);
