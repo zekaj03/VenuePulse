@@ -1116,24 +1116,6 @@ const App: React.FC = () => {
         exportToJson(exportData, `venuepulse_export_${new Date().toISOString().split('T')[0]}.json`);
     }, [dailyHistory, log, counts, maxCapacity]);
 
-    // Payment success handler - called after successful Stripe payment
-    const handlePaymentSuccess = useCallback(() => {
-        // Activate premium subscription
-        const expiresAt = new Date();
-        expiresAt.setMonth(expiresAt.getMonth() + 1);
-        setSubscription({
-            tier: 'premium',
-            isActive: true,
-            expiresAt,
-        });
-        setPaymentError(null);
-        setIsSubscriptionOpen(false);
-        // Show success message
-        setTimeout(() => {
-            alert(t('paymentSuccess'));
-        }, 100);
-    }, [t]);
-
     // License key validation
     const validateLicenseKey = useCallback((key: string): boolean => {
         // Format: VENUEPULSE-XXXX-XXXX-XXXX (e.g., VENUEPULSE-1A2B-3C4D-5E6F)
