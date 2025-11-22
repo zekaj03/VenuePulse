@@ -1,5 +1,10 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Gender, LogEntry, CapacityThreshold, UndoAction, SubscriptionStatus, SubscriptionTier } from './types';
+import {
+  Gender, LogEntry, CapacityThreshold, UndoAction, SubscriptionStatus, SubscriptionTier,
+  Zone, User, UserRole, Shift, AuditLog, Guest, Reservation, WaitlistEntry,
+  DailyReport, PeakHour, RevenueEntry, DailyClosing, AppNotification, NotificationSettings,
+  SecuritySettings, AppSettings as NewAppSettings
+} from './types';
 import { languages, translations } from './locales';
 import AnalyticsDashboard from './AnalyticsDashboard';
 
@@ -568,6 +573,75 @@ const App: React.FC = () => {
     const [paymentProcessing, setPaymentProcessing] = useState(false);
     const [paymentError, setPaymentError] = useState<string | null>(null);
 
+    // Multi-Zone Management
+    const [zones, setZones] = useState<Zone[]>(() => loadValidatedState('club_zones', [
+        { id: 'main', name: 'Main Area', maxCapacity: 200, currentCount: 0, color: '#06b6d4', isVIP: false, enabled: true },
+    ], (v: any): v is Zone[] => Array.isArray(v)));
+    const [selectedZone, setSelectedZone] = useState<string>('main');
+    const [isZoneModalOpen, setIsZoneModalOpen] = useState(false);
+    const [eventMode, setEventMode] = useState(false);
+
+    // Team Management
+    const [users, setUsers] = useState<User[]>(() => loadValidatedState('club_users', [
+        { id: '1', name: 'Admin User', email: 'admin@venuepulse.com', role: 'admin' as UserRole, isActive: true, createdAt: new Date() }
+    ], (v: any): v is User[] => Array.isArray(v)));
+    const [currentUser, setCurrentUser] = useState<User | null>(() => loadValidatedState('club_current_user', users[0] || null, (v: any): v is User | null => v === null || (v && typeof v.id === 'string')));
+    const [shifts, setShifts] = useState<Shift[]>(() => loadValidatedState('club_shifts', [], (v: any): v is Shift[] => Array.isArray(v)));
+    const [currentShift, setCurrentShift] = useState<Shift | null>(null);
+    const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => loadValidatedState('club_audit_logs', [], (v: any): v is AuditLog[] => Array.isArray(v)));
+    const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+
+    // Guest Management
+    const [guests, setGuests] = useState<Guest[]>(() => loadValidatedState('club_guests', [], (v: any): v is Guest[] => Array.isArray(v)));
+    const [reservations, setReservations] = useState<Reservation[]>(() => loadValidatedState('club_reservations', [], (v: any): v is Reservation[] => Array.isArray(v)));
+    const [waitlist, setWaitlist] = useState<WaitlistEntry[]>(() => loadValidatedState('club_waitlist', [], (v: any): v is WaitlistEntry[] => Array.isArray(v)));
+    const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
+    const [isReservationModalOpen, setIsReservationModalOpen] = useState(false);
+    const [isWaitlistModalOpen, setIsWaitlistModalOpen] = useState(false);
+    const [qrScannerOpen, setQrScannerOpen] = useState(false);
+
+    // Financial
+    const [revenueEntries, setRevenueEntries] = useState<RevenueEntry[]>(() => loadValidatedState('club_revenue', [], (v: any): v is RevenueEntry[] => Array.isArray(v)));
+    const [dailyClosings, setDailyClosings] = useState<DailyClosing[]>(() => loadValidatedState('club_closings', [], (v: any): v is DailyClosing[] => Array.isArray(v)));
+    const [isFinancialModalOpen, setIsFinancialModalOpen] = useState(false);
+
+    // Security
+    const [security, setSecurity] = useState<SecuritySettings>(() => loadValidatedState('club_security', {
+        pinEnabled: false,
+        sessionTimeout: 30,
+        requirePinForSettings: false,
+        requirePinForReports: false
+    }, (v: any): v is SecuritySettings => v && typeof v.pinEnabled === 'boolean'));
+    const [isPinLocked, setIsPinLocked] = useState(false);
+    const [pinInput, setPinInput] = useState('');
+
+    // Notifications
+    const [notifications, setNotifications] = useState<AppNotification[]>(() => loadValidatedState('club_notifications', [], (v: any): v is AppNotification[] => Array.isArray(v)));
+    const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => loadValidatedState('club_notification_settings', {
+        browserPush: false,
+        emailAlerts: false,
+        capacityAlerts: true,
+        dailyReports: false,
+        shiftReminders: false
+    }, (v: any): v is NotificationSettings => v && typeof v.browserPush === 'boolean'));
+    const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
+
+    // Offline Mode
+    const [isOnline, setIsOnline] = useState(navigator.onLine);
+    const [lastSync, setLastSync] = useState<Date | null>(() => loadValidatedState('club_last_sync', null, (v: any): v is Date | null => v === null || v instanceof Date));
+    const [syncInProgress, setSyncInProgress] = useState(false);
+    const [pendingChanges, setPendingChanges] = useState<any[]>([]);
+
+    // UX States
+    const [tabletMode, setTabletMode] = useState(false);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [voiceFeedbackEnabled, setVoiceFeedbackEnabled] = useState(false);
+
+    // Hardware
+    const [printerConnected, setPrinterConnected] = useState(false);
+    const [doorCounterConnected, setDoorCounterConnected] = useState(false);
+    const [apiKey, setApiKey] = useState<string>(() => loadValidatedState('club_api_key', '', (v: any): v is string => typeof v === 'string'));
+
     const settingsModalRef = useRef<HTMLDivElement>(null);
     const historyModalRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -618,7 +692,22 @@ const App: React.FC = () => {
         localStorage.setItem('club_settings', JSON.stringify(settings));
         localStorage.setItem('club_subscription', JSON.stringify(subscription));
         localStorage.setItem('club_tutorial_complete', JSON.stringify(tutorialStep === -1));
-    }, [counts, log, maxCapacity, theme, language, settings, subscription, tutorialStep]);
+        localStorage.setItem('club_zones', JSON.stringify(zones));
+        localStorage.setItem('club_users', JSON.stringify(users));
+        localStorage.setItem('club_current_user', JSON.stringify(currentUser));
+        localStorage.setItem('club_shifts', JSON.stringify(shifts));
+        localStorage.setItem('club_audit_logs', JSON.stringify(auditLogs));
+        localStorage.setItem('club_guests', JSON.stringify(guests));
+        localStorage.setItem('club_reservations', JSON.stringify(reservations));
+        localStorage.setItem('club_waitlist', JSON.stringify(waitlist));
+        localStorage.setItem('club_revenue', JSON.stringify(revenueEntries));
+        localStorage.setItem('club_closings', JSON.stringify(dailyClosings));
+        localStorage.setItem('club_security', JSON.stringify(security));
+        localStorage.setItem('club_notifications', JSON.stringify(notifications));
+        localStorage.setItem('club_notification_settings', JSON.stringify(notificationSettings));
+        localStorage.setItem('club_last_sync', JSON.stringify(lastSync));
+        localStorage.setItem('club_api_key', JSON.stringify(apiKey));
+    }, [counts, log, maxCapacity, theme, language, settings, subscription, tutorialStep, zones, users, currentUser, shifts, auditLogs, guests, reservations, waitlist, revenueEntries, dailyClosings, security, notifications, notificationSettings, lastSync, apiKey]);
 
     // Premium feature check
     const isPremium = useMemo(() => subscription.tier === 'premium' && subscription.isActive, [subscription]);
@@ -763,8 +852,62 @@ const App: React.FC = () => {
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [isSettingsOpen, isHistoryOpen, isAnalyticsOpen, undoStack, redoStack]);
-    
-    
+
+    // Offline Mode Detection
+    useEffect(() => {
+        const handleOnline = () => setIsOnline(true);
+        const handleOffline = () => setIsOnline(false);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
+    // PIN Lock Timer
+    useEffect(() => {
+        if (!security.pinEnabled || !security.sessionTimeout) return;
+
+        let timeout: NodeJS.Timeout;
+        const resetTimer = () => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => {
+                if (security.pinEnabled) setIsPinLocked(true);
+            }, security.sessionTimeout * 60 * 1000);
+        };
+
+        window.addEventListener('mousemove', resetTimer);
+        window.addEventListener('keypress', resetTimer);
+        resetTimer();
+
+        return () => {
+            clearTimeout(timeout);
+            window.removeEventListener('mousemove', resetTimer);
+            window.removeEventListener('keypress', resetTimer);
+        };
+    }, [security.pinEnabled, security.sessionTimeout]);
+
+    // Browser Notifications Permission
+    useEffect(() => {
+        if (notificationSettings.browserPush && 'Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }, [notificationSettings.browserPush]);
+
+    // Fullscreen change detection
+    useEffect(() => {
+        const handleFullscreenChange = () => {
+            setIsFullscreen(!!document.fullscreenElement);
+        };
+
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    }, []);
+
+
     // ========= HANDLER-FUNKTIONEN ========= //
     
     const handleLog = useCallback((gender: Gender, action: 'in' | 'out'): number => {
@@ -992,6 +1135,281 @@ const App: React.FC = () => {
         }
     };
 
+    // ========= NEW FEATURE HANDLERS ========= //
+
+    // Audit Log Helper
+    const addAuditLog = useCallback((action: string, details: string) => {
+        if (!currentUser) return;
+        const newLog: AuditLog = {
+            id: Date.now(),
+            timestamp: new Date(),
+            userId: currentUser.id,
+            action,
+            details,
+        };
+        setAuditLogs(prev => [newLog, ...prev].slice(0, 1000)); // Keep last 1000 logs
+    }, [currentUser]);
+
+    // Zone Management Handlers
+    const handleAddZone = useCallback((zone: Omit<Zone, 'id' | 'currentCount'>) => {
+        const newZone: Zone = {
+            ...zone,
+            id: Date.now().toString(),
+            currentCount: 0,
+        };
+        setZones(prev => [...prev, newZone]);
+        addAuditLog('zone_added', `Added zone: ${zone.name}`);
+    }, [addAuditLog]);
+
+    const handleUpdateZone = useCallback((zoneId: string, updates: Partial<Zone>) => {
+        setZones(prev => prev.map(z => z.id === zoneId ? { ...z, ...updates } : z));
+        addAuditLog('zone_updated', `Updated zone: ${zoneId}`);
+    }, [addAuditLog]);
+
+    const handleDeleteZone = useCallback((zoneId: string) => {
+        setZones(prev => prev.filter(z => z.id !== zoneId));
+        addAuditLog('zone_deleted', `Deleted zone: ${zoneId}`);
+    }, [addAuditLog]);
+
+    // Team Management Handlers
+    const handleAddUser = useCallback((user: Omit<User, 'id' | 'createdAt'>) => {
+        const newUser: User = {
+            ...user,
+            id: Date.now().toString(),
+            createdAt: new Date(),
+        };
+        setUsers(prev => [...prev, newUser]);
+        addAuditLog('user_added', `Added user: ${user.name}`);
+    }, [addAuditLog]);
+
+    const handleStartShift = useCallback(() => {
+        if (!currentUser || currentShift) return;
+        const newShift: Shift = {
+            id: Date.now().toString(),
+            userId: currentUser.id,
+            startTime: new Date(),
+            endTime: null,
+            zoneId: selectedZone,
+        };
+        setShifts(prev => [...prev, newShift]);
+        setCurrentShift(newShift);
+        addAuditLog('shift_started', `Started shift`);
+    }, [currentUser, currentShift, selectedZone, addAuditLog]);
+
+    const handleEndShift = useCallback(() => {
+        if (!currentShift) return;
+        const endTime = new Date();
+        setShifts(prev => prev.map(s =>
+            s.id === currentShift.id ? { ...s, endTime } : s
+        ));
+        setCurrentShift(null);
+        addAuditLog('shift_ended', `Ended shift`);
+    }, [currentShift, addAuditLog]);
+
+    // Guest Management Handlers
+    const handleAddGuest = useCallback((guest: Omit<Guest, 'id' | 'qrCode'>) => {
+        const newGuest: Guest = {
+            ...guest,
+            id: Date.now().toString(),
+            qrCode: `VPG-${Date.now()}`,
+        };
+        setGuests(prev => [...prev, newGuest]);
+        addAuditLog('guest_added', `Added guest: ${guest.name}`);
+    }, [addAuditLog]);
+
+    const handleGuestCheckIn = useCallback((guestId: string) => {
+        setGuests(prev => prev.map(g =>
+            g.id === guestId ? { ...g, checkInTime: new Date() } : g
+        ));
+        addAuditLog('guest_checkin', `Guest checked in: ${guestId}`);
+    }, [addAuditLog]);
+
+    const handleGuestCheckOut = useCallback((guestId: string) => {
+        setGuests(prev => prev.map(g =>
+            g.id === guestId ? { ...g, checkOutTime: new Date() } : g
+        ));
+        addAuditLog('guest_checkout', `Guest checked out: ${guestId}`);
+    }, [addAuditLog]);
+
+    // Reservation Handlers
+    const handleAddReservation = useCallback((reservation: Omit<Reservation, 'id' | 'createdAt'>) => {
+        const newReservation: Reservation = {
+            ...reservation,
+            id: Date.now().toString(),
+            createdAt: new Date(),
+        };
+        setReservations(prev => [...prev, newReservation]);
+        addAuditLog('reservation_added', `Added reservation for: ${reservation.guestName}`);
+    }, [addAuditLog]);
+
+    const handleUpdateReservationStatus = useCallback((id: string, status: Reservation['status']) => {
+        setReservations(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+        addAuditLog('reservation_updated', `Updated reservation ${id} to ${status}`);
+    }, [addAuditLog]);
+
+    // Waitlist Handlers
+    const handleAddToWaitlist = useCallback((entry: Omit<WaitlistEntry, 'id' | 'addedAt' | 'status'>) => {
+        const newEntry: WaitlistEntry = {
+            ...entry,
+            id: Date.now().toString(),
+            addedAt: new Date(),
+            status: 'waiting',
+        };
+        setWaitlist(prev => [...prev, newEntry]);
+        addAuditLog('waitlist_added', `Added to waitlist: ${entry.guestName}`);
+    }, [addAuditLog]);
+
+    const handleNotifyWaitlistGuest = useCallback((id: string) => {
+        setWaitlist(prev => prev.map(w => w.id === id ? { ...w, status: 'notified' as const } : w));
+        addAuditLog('waitlist_notified', `Notified waitlist guest: ${id}`);
+
+        // Send browser notification if enabled
+        if (notificationSettings.browserPush && 'Notification' in window && Notification.permission === 'granted') {
+            const entry = waitlist.find(w => w.id === id);
+            if (entry) {
+                new Notification('Guest Ready', {
+                    body: `${entry.guestName} - Table is ready`,
+                    icon: '/icon.png'
+                });
+            }
+        }
+    }, [addAuditLog, waitlist, notificationSettings.browserPush]);
+
+    // Financial Handlers
+    const handleAddRevenue = useCallback((amount: number, guestCount: number, zoneId?: string, notes?: string) => {
+        const newEntry: RevenueEntry = {
+            id: Date.now().toString(),
+            timestamp: new Date(),
+            amount,
+            guestCount,
+            averagePerGuest: guestCount > 0 ? amount / guestCount : 0,
+            zoneId,
+            notes,
+        };
+        setRevenueEntries(prev => [...prev, newEntry]);
+        addAuditLog('revenue_added', `Added revenue entry: ${amount} CHF`);
+    }, [addAuditLog]);
+
+    const handleDailyClosing = useCallback(() => {
+        if (!currentUser) return;
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const todayRevenue = revenueEntries.filter(e => {
+            const entryDate = new Date(e.timestamp);
+            entryDate.setHours(0, 0, 0, 0);
+            return entryDate.getTime() === today.getTime();
+        });
+
+        const totalRevenue = todayRevenue.reduce((sum, e) => sum + e.amount, 0);
+        const totalGuests = todayRevenue.reduce((sum, e) => sum + e.guestCount, 0);
+
+        const closing: DailyClosing = {
+            id: Date.now().toString(),
+            date: new Date(),
+            totalRevenue,
+            totalGuests,
+            averageRevenuePerGuest: totalGuests > 0 ? totalRevenue / totalGuests : 0,
+            closedBy: currentUser.name,
+            closedAt: new Date(),
+        };
+
+        setDailyClosings(prev => [...prev, closing]);
+        addAuditLog('daily_closing', `Daily closing completed: ${totalRevenue} CHF`);
+    }, [currentUser, revenueEntries, addAuditLog]);
+
+    // Security Handlers
+    const handleEnablePIN = useCallback((pin: string) => {
+        setSecurity(prev => ({ ...prev, pinEnabled: true, pin }));
+        addAuditLog('pin_enabled', 'PIN protection enabled');
+    }, [addAuditLog]);
+
+    const handleVerifyPIN = useCallback((inputPin: string) => {
+        if (inputPin === security.pin) {
+            setIsPinLocked(false);
+            setPinInput('');
+            return true;
+        }
+        return false;
+    }, [security.pin]);
+
+    // Notification Handlers
+    const handleAddNotification = useCallback((notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
+        const newNotification: AppNotification = {
+            ...notification,
+            id: Date.now().toString(),
+            timestamp: new Date(),
+            read: false,
+        };
+        setNotifications(prev => [newNotification, ...prev]);
+
+        // Browser notification
+        if (notificationSettings.browserPush && 'Notification' in window && Notification.permission === 'granted') {
+            new Notification(notification.title, {
+                body: notification.message,
+                icon: '/icon.png'
+            });
+        }
+    }, [notificationSettings.browserPush]);
+
+    const handleMarkNotificationRead = useCallback((id: string) => {
+        setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    }, []);
+
+    const handleMarkAllNotificationsRead = useCallback(() => {
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    }, []);
+
+    // Offline Sync Handler
+    const handleSync = useCallback(async () => {
+        setSyncInProgress(true);
+        try {
+            // Simulate sync - in production, this would sync with backend
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            setLastSync(new Date());
+            setPendingChanges([]);
+            addAuditLog('sync_completed', 'Data synchronized successfully');
+        } catch (error) {
+            console.error('Sync failed:', error);
+        } finally {
+            setSyncInProgress(false);
+        }
+    }, [addAuditLog]);
+
+    // UX Handlers
+    const handleToggleFullscreen = useCallback(() => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen();
+        } else {
+            document.exitFullscreen();
+        }
+    }, []);
+
+    const handleToggleTabletMode = useCallback(() => {
+        setTabletMode(prev => !prev);
+        addAuditLog('tablet_mode_toggled', `Tablet mode: ${!tabletMode}`);
+    }, [tabletMode, addAuditLog]);
+
+    // Hardware Handlers
+    const handlePrintReport = useCallback(() => {
+        if (!printerConnected) {
+            alert(t('hardwarePrinterDisconnected'));
+            return;
+        }
+        window.print();
+        addAuditLog('report_printed', 'Report printed');
+    }, [printerConnected, addAuditLog, t]);
+
+    const handleGenerateAPIKey = useCallback(() => {
+        const newKey = 'vp_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        setApiKey(newKey);
+        addAuditLog('api_key_generated', 'New API key generated');
+        return newKey;
+    }, [addAuditLog]);
+
+    // ========= END NEW HANDLERS ========= //
+
     const sortedLog = useMemo(() => [...log].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()), [log]);
 
     const filteredLog = useMemo(() => {
@@ -1136,6 +1554,91 @@ const App: React.FC = () => {
                         </button>
                     </div>
                 </header>
+
+                {/* Feature Navigation Bar - Premium Features */}
+                {isPremium && (
+                    <div className="max-w-7xl mx-auto mb-8 px-2">
+                        <div className="glass-panel rounded-2xl p-4 shadow-xl border border-white/40 dark:border-white/10">
+                            <div className="flex items-center gap-3 overflow-x-auto pb-2">
+                                {/* Zones */}
+                                <button onClick={() => setIsZoneModalOpen(true)} className="flex items-center gap-2 px-4 py-2 glass-panel rounded-xl hover:scale-105 transition-all duration-200 border border-white/20 whitespace-nowrap">
+                                    <svg className="w-5 h-5 text-cyan-600 dark:text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                                    </svg>
+                                    <span className="text-sm font-semibold">{t('zonesTitle')}</span>
+                                    <span className="text-xs bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 px-2 py-0.5 rounded-full">{zones.length}</span>
+                                </button>
+
+                                {/* Team */}
+                                <button onClick={() => setIsTeamModalOpen(true)} className="flex items-center gap-2 px-4 py-2 glass-panel rounded-xl hover:scale-105 transition-all duration-200 border border-white/20 whitespace-nowrap">
+                                    <svg className="w-5 h-5 text-purple-600 dark:text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                    </svg>
+                                    <span className="text-sm font-semibold">{t('teamTitle')}</span>
+                                    <span className="text-xs bg-purple-500/20 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full">{users.filter(u => u.isActive).length}</span>
+                                </button>
+
+                                {/* Guests */}
+                                <button onClick={() => setIsGuestModalOpen(true)} className="flex items-center gap-2 px-4 py-2 glass-panel rounded-xl hover:scale-105 transition-all duration-200 border border-white/20 whitespace-nowrap">
+                                    <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                    </svg>
+                                    <span className="text-sm font-semibold">{t('guestsTitle')}</span>
+                                    <span className="text-xs bg-green-500/20 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full">{guests.filter(g => g.checkInTime && !g.checkOutTime).length}</span>
+                                </button>
+
+                                {/* Reservations */}
+                                <button onClick={() => setIsReservationModalOpen(true)} className="flex items-center gap-2 px-4 py-2 glass-panel rounded-xl hover:scale-105 transition-all duration-200 border border-white/20 whitespace-nowrap">
+                                    <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                    </svg>
+                                    <span className="text-sm font-semibold">{t('reservationsTitle')}</span>
+                                    <span className="text-xs bg-blue-500/20 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full">{reservations.filter(r => r.status === 'confirmed').length}</span>
+                                </button>
+
+                                {/* Waitlist */}
+                                <button onClick={() => setIsWaitlistModalOpen(true)} className="flex items-center gap-2 px-4 py-2 glass-panel rounded-xl hover:scale-105 transition-all duration-200 border border-white/20 whitespace-nowrap">
+                                    <svg className="w-5 h-5 text-orange-600 dark:text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <span className="text-sm font-semibold">{t('waitlistTitle')}</span>
+                                    <span className="text-xs bg-orange-500/20 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded-full">{waitlist.filter(w => w.status === 'waiting').length}</span>
+                                </button>
+
+                                {/* Financial */}
+                                <button onClick={() => setIsFinancialModalOpen(true)} className="flex items-center gap-2 px-4 py-2 glass-panel rounded-xl hover:scale-105 transition-all duration-200 border border-white/20 whitespace-nowrap">
+                                    <svg className="w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <span className="text-sm font-semibold">{t('financialTitle')}</span>
+                                </button>
+
+                                {/* Notifications */}
+                                <button onClick={() => setIsNotificationModalOpen(true)} className="relative flex items-center gap-2 px-4 py-2 glass-panel rounded-xl hover:scale-105 transition-all duration-200 border border-white/20 whitespace-nowrap">
+                                    <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                                    </svg>
+                                    <span className="text-sm font-semibold">{t('notificationsTitle')}</span>
+                                    {notifications.filter(n => !n.read).length > 0 && (
+                                        <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
+                                            {notifications.filter(n => !n.read).length}
+                                        </span>
+                                    )}
+                                </button>
+
+                                {/* Sync Status */}
+                                {!isOnline && (
+                                    <div className="flex items-center gap-2 px-4 py-2 glass-panel rounded-xl border border-red-300/50 bg-red-50/50 dark:bg-red-900/20 whitespace-nowrap">
+                                        <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414" />
+                                        </svg>
+                                        <span className="text-sm font-semibold text-red-700 dark:text-red-300">{t('offlineModeTitle')}</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
                     {/* Left Column - Main Stats */}
@@ -1719,6 +2222,317 @@ const App: React.FC = () => {
                                 )}
                             </div>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Quick Info Modal - Shows summary of all new features for demo */}
+            {(isZoneModalOpen || isTeamModalOpen || isGuestModalOpen || isReservationModalOpen || isWaitlistModalOpen || isFinancialModalOpen || isNotificationModalOpen) && (
+                <div className="fixed inset-0 bg-slate-900/80 dark:bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="glass-panel rounded-3xl p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-white/40 dark:border-white/10 animate-in slide-in-from-bottom-8 duration-500">
+                        {/* Modal Header */}
+                        <div className="flex justify-between items-center mb-6">
+                            <div>
+                                <h2 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">
+                                    {isZoneModalOpen && t('zonesTitle')}
+                                    {isTeamModalOpen && t('teamTitle')}
+                                    {isGuestModalOpen && t('guestsTitle')}
+                                    {isReservationModalOpen && t('reservationsTitle')}
+                                    {isWaitlistModalOpen && t('waitlistTitle')}
+                                    {isFinancialModalOpen && t('financialTitle')}
+                                    {isNotificationModalOpen && t('notificationsTitle')}
+                                </h2>
+                                <p className="text-sm text-slate-600 dark:text-slate-400">Premium Feature</p>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setIsZoneModalOpen(false);
+                                    setIsTeamModalOpen(false);
+                                    setIsGuestModalOpen(false);
+                                    setIsReservationModalOpen(false);
+                                    setIsWaitlistModalOpen(false);
+                                    setIsFinancialModalOpen(false);
+                                    setIsNotificationModalOpen(false);
+                                }}
+                                className="w-10 h-10 flex items-center justify-center rounded-full glass-panel hover:scale-110 transition-transform"
+                            >
+                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        {/* Zones Modal Content */}
+                        {isZoneModalOpen && (
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {zones.map(zone => (
+                                        <div key={zone.id} className="p-4 rounded-2xl glass-panel border border-white/20">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <h3 className="font-bold text-lg" style={{color: zone.color}}>{zone.name}</h3>
+                                                <span className={`px-2 py-1 rounded-full text-xs font-bold ${zone.enabled ? 'bg-green-500/20 text-green-700 dark:text-green-300' : 'bg-gray-500/20 text-gray-700 dark:text-gray-300'}`}>
+                                                    {zone.enabled ? t('zoneEnabled') : 'Disabled'}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between text-sm">
+                                                <span className="text-slate-600 dark:text-slate-400">{t('zoneCapacity')}: {zone.maxCapacity}</span>
+                                                <span className="font-bold">{zone.currentCount} / {zone.maxCapacity}</span>
+                                            </div>
+                                            {zone.isVIP && (
+                                                <div className="mt-2 flex items-center gap-1 text-yellow-600 dark:text-yellow-400 text-sm">
+                                                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                                    </svg>
+                                                    <span className="font-semibold">VIP</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        const newZone: Omit<Zone, 'id' | 'currentCount'> = {
+                                            name: `Zone ${zones.length + 1}`,
+                                            maxCapacity: 100,
+                                            color: '#3b82f6',
+                                            isVIP: false,
+                                            enabled: true
+                                        };
+                                        handleAddZone(newZone);
+                                    }}
+                                    className="w-full p-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-bold transition-all hover:scale-105 shadow-lg"
+                                >
+                                    + {t('zoneAdd')}
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Team Modal Content */}
+                        {isTeamModalOpen && (
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {users.map(user => (
+                                        <div key={user.id} className="p-4 rounded-2xl glass-panel border border-white/20">
+                                            <div className="flex items-center gap-3 mb-2">
+                                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-400 to-pink-400 flex items-center justify-center text-white font-bold text-lg">
+                                                    {user.name.charAt(0)}
+                                                </div>
+                                                <div className="flex-1">
+                                                    <h3 className="font-bold">{user.name}</h3>
+                                                    <p className="text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-between items-center mt-3">
+                                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                                                    user.role === 'admin' ? 'bg-red-500/20 text-red-700 dark:text-red-300' :
+                                                    user.role === 'manager' ? 'bg-blue-500/20 text-blue-700 dark:text-blue-300' :
+                                                    'bg-green-500/20 text-green-700 dark:text-green-300'
+                                                }`}>
+                                                    {user.role === 'admin' ? t('teamRoleAdmin') : user.role === 'manager' ? t('teamRoleManager') : t('teamRoleStaff')}
+                                                </span>
+                                                <span className={`text-sm ${user.isActive ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}`}>
+                                                    {user.isActive ? '● Online' : '○ Offline'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="p-4 rounded-2xl bg-blue-50/50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                                    <h4 className="font-bold mb-2">{t('shiftsTitle')}</h4>
+                                    {currentShift ? (
+                                        <div>
+                                            <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">
+                                                {t('shiftCurrent')}: {new Date(currentShift.startTime).toLocaleTimeString(currentLocale)}
+                                            </p>
+                                            <button onClick={handleEndShift} className="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold transition-all">
+                                                {t('shiftEnd')}
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={handleStartShift} disabled={!currentUser} className="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-semibold transition-all">
+                                            {t('shiftStart')}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Guests Modal Content */}
+                        {isGuestModalOpen && (
+                            <div className="space-y-6">
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {guests.filter(g => g.checkInTime && !g.checkOutTime).map(guest => (
+                                        <div key={guest.id} className="p-4 rounded-2xl glass-panel border border-white/20 flex justify-between items-center">
+                                            <div>
+                                                <h3 className="font-bold">{guest.name}</h3>
+                                                <p className="text-sm text-slate-500 dark:text-slate-400">
+                                                    {t('guestCheckIn')}: {guest.checkInTime ? new Date(guest.checkInTime).toLocaleTimeString(currentLocale) : '-'}
+                                                </p>
+                                                {guest.phone && <p className="text-xs text-slate-400">{guest.phone}</p>}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {guest.isVIP && (
+                                                    <span className="px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-700 dark:text-yellow-300 text-xs font-bold">VIP</span>
+                                                )}
+                                                <button onClick={() => handleGuestCheckOut(guest.id)} className="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-all">
+                                                    {t('guestCheckOut')}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {guests.filter(g => g.checkInTime && !g.checkOutTime).length === 0 && (
+                                        <p className="text-center text-slate-500 dark:text-slate-400 py-8">{t('noData')}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Reservations Modal Content */}
+                        {isReservationModalOpen && (
+                            <div className="space-y-6">
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {reservations.map(reservation => (
+                                        <div key={reservation.id} className="p-4 rounded-2xl glass-panel border border-white/20">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <h3 className="font-bold">{reservation.guestName}</h3>
+                                                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                                                        {new Date(reservation.reservationTime).toLocaleString(currentLocale)}
+                                                    </p>
+                                                    <p className="text-xs text-slate-500">
+                                                        {t('reservationPartySize')}: {reservation.partySize}
+                                                    </p>
+                                                </div>
+                                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                                                    reservation.status === 'confirmed' ? 'bg-green-500/20 text-green-700 dark:text-green-300' :
+                                                    reservation.status === 'pending' ? 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-300' :
+                                                    reservation.status === 'cancelled' ? 'bg-red-500/20 text-red-700 dark:text-red-300' :
+                                                    'bg-gray-500/20 text-gray-700 dark:text-gray-300'
+                                                }`}>
+                                                    {reservation.status === 'confirmed' ? t('reservationStatusConfirmed') :
+                                                     reservation.status === 'pending' ? t('reservationStatusPending') :
+                                                     reservation.status === 'cancelled' ? t('reservationStatusCancelled') :
+                                                     t('reservationStatusCompleted')}
+                                                </span>
+                                            </div>
+                                            {reservation.notes && (
+                                                <p className="text-sm text-slate-500 italic mt-2">{reservation.notes}</p>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {reservations.length === 0 && (
+                                        <p className="text-center text-slate-500 dark:text-slate-400 py-8">{t('noData')}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Waitlist Modal Content */}
+                        {isWaitlistModalOpen && (
+                            <div className="space-y-6">
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {waitlist.map(entry => (
+                                        <div key={entry.id} className="p-4 rounded-2xl glass-panel border border-white/20 flex justify-between items-center">
+                                            <div>
+                                                <h3 className="font-bold">{entry.guestName}</h3>
+                                                <p className="text-sm text-slate-600 dark:text-slate-400">
+                                                    {t('reservationPartySize')}: {entry.partySize}
+                                                </p>
+                                                <p className="text-xs text-slate-500">
+                                                    {t('waitlistEstimatedWait')}: {entry.estimatedWaitMinutes ? t('waitlistMinutes', {minutes: entry.estimatedWaitMinutes.toString()}) : '-'}
+                                                </p>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {entry.status === 'waiting' && (
+                                                    <button onClick={() => handleNotifyWaitlistGuest(entry.id)} className="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white text-sm font-semibold transition-all">
+                                                        {t('waitlistNotify')}
+                                                    </button>
+                                                )}
+                                                {entry.status === 'notified' && (
+                                                    <span className="px-3 py-1 rounded-full bg-blue-500/20 text-blue-700 dark:text-blue-300 text-xs font-bold">
+                                                        Notified
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {waitlist.length === 0 && (
+                                        <p className="text-center text-slate-500 dark:text-slate-400 py-8">{t('noData')}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Financial Modal Content */}
+                        {isFinancialModalOpen && (
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="p-6 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-600 text-white">
+                                        <h3 className="text-sm font-semibold opacity-90 mb-2">{t('financialTotalRevenue')}</h3>
+                                        <p className="text-3xl font-bold">
+                                            {revenueEntries.reduce((sum, e) => sum + e.amount, 0).toFixed(2)} CHF
+                                        </p>
+                                    </div>
+                                    <div className="p-6 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-600 text-white">
+                                        <h3 className="text-sm font-semibold opacity-90 mb-2">{t('financialAveragePerGuest')}</h3>
+                                        <p className="text-3xl font-bold">
+                                            {revenueEntries.length > 0
+                                                ? (revenueEntries.reduce((sum, e) => sum + e.amount, 0) / revenueEntries.reduce((sum, e) => sum + e.guestCount, 0)).toFixed(2)
+                                                : '0.00'} CHF
+                                        </p>
+                                    </div>
+                                </div>
+                                {currentUser && (
+                                    <button onClick={handleDailyClosing} className="w-full p-4 rounded-2xl bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold transition-all hover:scale-105 shadow-lg">
+                                        {t('financialCloseDay')}
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Notifications Modal Content */}
+                        {isNotificationModalOpen && (
+                            <div className="space-y-6">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-bold">{notifications.filter(n => !n.read).length} {t('notificationsTitle')}</h3>
+                                    {notifications.some(n => !n.read) && (
+                                        <button onClick={handleMarkAllNotificationsRead} className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 font-semibold">
+                                            {t('notificationsMarkAllRead')}
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {notifications.map(notification => (
+                                        <div
+                                            key={notification.id}
+                                            className={`p-4 rounded-2xl glass-panel border cursor-pointer transition-all hover:scale-102 ${
+                                                notification.read ? 'border-white/10 opacity-60' : 'border-white/30'
+                                            }`}
+                                            onClick={() => handleMarkNotificationRead(notification.id)}
+                                        >
+                                            <div className="flex items-start gap-3">
+                                                <div className={`w-2 h-2 rounded-full mt-2 ${
+                                                    notification.type === 'error' ? 'bg-red-500' :
+                                                    notification.type === 'warning' ? 'bg-yellow-500' :
+                                                    notification.type === 'success' ? 'bg-green-500' :
+                                                    'bg-blue-500'
+                                                }`} />
+                                                <div className="flex-1">
+                                                    <h4 className="font-bold mb-1">{notification.title}</h4>
+                                                    <p className="text-sm text-slate-600 dark:text-slate-400">{notification.message}</p>
+                                                    <p className="text-xs text-slate-500 mt-2">
+                                                        {new Date(notification.timestamp).toLocaleString(currentLocale)}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {notifications.length === 0 && (
+                                        <p className="text-center text-slate-500 dark:text-slate-400 py-8">{t('noData')}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
