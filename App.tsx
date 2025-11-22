@@ -1120,27 +1120,26 @@ const App: React.FC = () => {
             // });
             // const data = await response.json();
 
-            // Mock payment processing (remove in production)
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Mock payment processing - DISABLED FOR PRODUCTION
+            await new Promise(resolve => setTimeout(resolve, 1500));
 
-            // Simulate 10% failure rate for testing
-            if (Math.random() < 0.1) {
-                throw new Error('Payment declined');
-            }
+            // Payment integration not yet implemented
+            throw new Error('Payment system not yet configured. Please contact support to activate Premium features.');
 
-            // Success - activate premium
-            const expiresAt = new Date();
-            expiresAt.setMonth(expiresAt.getMonth() + 1);
-            setSubscription({
-                tier: 'premium',
-                isActive: true,
-                expiresAt,
-            });
-            setRestoreMessage({ type: 'success', text: t('paymentSuccess') });
-            setIsSubscriptionOpen(false);
+            // UNCOMMENT BELOW WHEN PAYMENT GATEWAY IS CONFIGURED:
+            // // Success - activate premium
+            // const expiresAt = new Date();
+            // expiresAt.setMonth(expiresAt.getMonth() + 1);
+            // setSubscription({
+            //     tier: 'premium',
+            //     isActive: true,
+            //     expiresAt,
+            // });
+            // setRestoreMessage({ type: 'success', text: t('paymentSuccess') });
+            // setIsSubscriptionOpen(false);
         } catch (error) {
             console.error('Payment error:', error);
-            setPaymentError(t('paymentError'));
+            setPaymentError(error instanceof Error ? error.message : t('paymentError'));
         } finally {
             setPaymentProcessing(false);
         }
