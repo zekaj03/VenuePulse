@@ -617,9 +617,8 @@ const App: React.FC = () => {
     const [thresholdAlert, setThresholdAlert] = useState<string | null>(null);
     const [restoreMessage, setRestoreMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
-    // Payment state
-    const [paymentProcessing, setPaymentProcessing] = useState(false);
-    const [paymentError, setPaymentError] = useState<string | null>(null);
+    // License key state
+    const [licenseKey, setLicenseKey] = useState('');
 
     // Multi-Zone Management
     const [zones, setZones] = useState<Zone[]>(() => loadValidatedState('club_zones', [
@@ -1135,16 +1134,42 @@ const App: React.FC = () => {
         }, 100);
     }, [t]);
 
-    // Payment error handler
-    const handlePaymentError = useCallback((error: string) => {
-        setPaymentError(error);
-        setPaymentProcessing(false);
+    // License key validation
+    const validateLicenseKey = useCallback((key: string): boolean => {
+        // Format: VENUEPULSE-XXXX-XXXX-XXXX (e.g., VENUEPULSE-1A2B-3C4D-5E6F)
+        const keyPattern = /^VENUEPULSE-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+        if (!keyPattern.test(key)) return false;
+
+        // Simple checksum validation (last segment)
+        const segments = key.split('-');
+        const checksum = segments[3];
+        const dataSegments = segments.slice(1, 3).join('');
+
+        // Calculate simple checksum (sum of char codes mod 65536, convert to hex)
+        let sum = 0;
+        for (let i = 0; i < dataSegments.length; i++) {
+            sum += dataSegments.charCodeAt(i);
+        }
+        const expectedChecksum = (sum % 65536).toString(16).toUpperCase().padStart(4, '0');
+
+        return checksum === expectedChecksum;
     }, []);
 
-    // Payment cancel handler
-    const handlePaymentCancel = useCallback(() => {
-        setIsSubscriptionOpen(false);
-    }, []);
+    const handleActivateLicense = useCallback(() => {
+        const trimmedKey = licenseKey.trim().toUpperCase();
+
+        if (validateLicenseKey(trimmedKey)) {
+            setSubscription({
+                tier: 'premium',
+                isActive: true,
+                expiresAt: null // Lifetime license
+            });
+            setLicenseKey('');
+            setIsSubscriptionOpen(false);
+        } else {
+            alert(t('licenseKeyInvalid'));
+        }
+    }, [licenseKey, validateLicenseKey, t]);
 
     const handleCancelSubscription = useCallback(() => {
         if (window.confirm(t('subscriptionCancel'))) {
@@ -2187,38 +2212,50 @@ const App: React.FC = () => {
                             <div className="space-y-4">
                                 {!isPremium ? (
                                     <>
-                                        {/* Payment Method Selection */}
-                                        <div className="space-y-3">
-                                            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-center mb-4">{t('paymentMethodTitle')}</h4>
+                                        {/* License Key Activation */}
+                                        <div className="space-y-4">
+                                            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-center mb-2">{t('licenseKeyTitle')}</h4>
+                                            <p className="text-xs text-slate-600 dark:text-slate-400 text-center mb-4">{t('licenseKeyDescription')}</p>
 
-                                            {/* PayPal Payment Button */}
+                                            {/* License Key Input */}
+                                            <input
+                                                type="text"
+                                                value={licenseKey}
+                                                onChange={(e) => setLicenseKey(e.target.value.toUpperCase())}
+                                                placeholder="VENUEPULSE-XXXX-XXXX-XXXX"
+                                                className="w-full p-4 rounded-lg border-2 border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-white font-mono text-center focus:outline-none focus:border-purple-500 dark:focus:border-purple-400"
+                                                maxLength={27}
+                                            />
+
+                                            {/* Activate Button */}
                                             <button
-                                                onClick={() => {
-                                                    // TODO: Implement PayPal integration
-                                                    alert('PayPal-Integration wird bald verfügbar sein. Bitte konfigurieren Sie Ihr PayPal-Geschäftskonto.');
-                                                }}
-                                                className="w-full bg-yellow-400 text-blue-900 rounded-lg p-4 flex items-center justify-center gap-2 hover:bg-yellow-500 transition-colors"
+                                                onClick={handleActivateLicense}
+                                                disabled={!licenseKey.trim()}
+                                                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg p-4 font-semibold hover:from-purple-700 hover:to-pink-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
-                                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                                                    <path d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944.901C5.026.382 5.474 0 5.998 0h7.46c2.57 0 4.578.543 5.69 1.81 1.01 1.15 1.304 2.42 1.012 4.287-.023.143-.047.288-.077.437-.983 5.05-4.349 6.797-8.647 6.797h-2.19c-.524 0-.968.382-1.05.9l-1.12 7.106zm14.146-14.42a3.35 3.35 0 0 0-.607-.541c-.013.076-.026.175-.041.254-.93 4.778-4.005 7.201-9.138 7.201h-2.19a.563.563 0 0 0-.556.479l-1.187 7.527-.338 2.145a.525.525 0 0 0 .518.611h3.671a.867.867 0 0 0 .858-.738l.035-.177.671-4.262.043-.23a.87.87 0 0 1 .858-.739h.539c3.72 0 6.627-1.512 7.477-5.884.354-1.832.166-3.361-.698-4.426z"/>
-                                                </svg>
-                                                <span>Mit PayPal bezahlen</span>
+                                                {t('licenseKeyActivate')}
                                             </button>
-                                        </div>
 
-                                        {/* Payment Error */}
-                                        {paymentError && (
-                                            <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-center">
-                                                <p className="text-sm font-medium text-rose-700 dark:text-rose-300">{paymentError}</p>
+                                            {/* Purchase Info */}
+                                            <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                                                <p className="text-sm text-blue-700 dark:text-blue-300 text-center mb-2">
+                                                    {t('licenseKeyPurchaseInfo')}
+                                                </p>
+                                                <a
+                                                    href="mailto:support@venuepulse.com?subject=Premium License"
+                                                    className="text-sm text-blue-600 dark:text-blue-400 hover:underline block text-center"
+                                                >
+                                                    {t('licenseKeyContactUs')}
+                                                </a>
                                             </div>
-                                        )}
 
-                                        {/* Secure Payment Badge */}
-                                        <div className="flex items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400 pt-2">
-                                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-                                            </svg>
-                                            <span>{t('paymentSecure')}</span>
+                                            {/* How it works */}
+                                            <div className="flex items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400 pt-2">
+                                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                                                </svg>
+                                                <span>{t('licenseKeyHelp')}</span>
+                                            </div>
                                         </div>
                                     </>
                                 ) : (
