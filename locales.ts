@@ -250,7 +250,6 @@ const enTranslations = {
   waitlistMinutes: '{minutes} min',
 
   // Analytics
-  analyticsTitle: 'Analytics',
   analyticsPeakHours: 'Peak Hours',
   analyticsReports: 'Reports',
   analyticsDailyReport: 'Daily Report',

@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import {
   Gender, LogEntry, CapacityThreshold, UndoAction, SubscriptionStatus, SubscriptionTier,
   Zone, User, UserRole, Shift, AuditLog, Guest, Reservation, WaitlistEntry,
-  DailyReport, PeakHour, RevenueEntry, DailyClosing, Notification, NotificationSettings,
+  DailyReport, PeakHour, RevenueEntry, DailyClosing, AppNotification, NotificationSettings,
   SecuritySettings, AppSettings as NewAppSettings
 } from './types';
 import { languages, translations } from './locales';
@@ -573,6 +573,75 @@ const App: React.FC = () => {
     const [paymentProcessing, setPaymentProcessing] = useState(false);
     const [paymentError, setPaymentError] = useState<string | null>(null);
 
+    // Multi-Zone Management
+    const [zones, setZones] = useState<Zone[]>(() => loadValidatedState('club_zones', [
+        { id: 'main', name: 'Main Area', maxCapacity: 200, currentCount: 0, color: '#06b6d4', isVIP: false, enabled: true },
+    ], (v: any): v is Zone[] => Array.isArray(v)));
+    const [selectedZone, setSelectedZone] = useState<string>('main');
+    const [isZoneModalOpen, setIsZoneModalOpen] = useState(false);
+    const [eventMode, setEventMode] = useState(false);
+
+    // Team Management
+    const [users, setUsers] = useState<User[]>(() => loadValidatedState('club_users', [
+        { id: '1', name: 'Admin User', email: 'admin@venuepulse.com', role: 'admin' as UserRole, isActive: true, createdAt: new Date() }
+    ], (v: any): v is User[] => Array.isArray(v)));
+    const [currentUser, setCurrentUser] = useState<User | null>(() => loadValidatedState('club_current_user', users[0] || null, (v: any): v is User | null => v === null || (v && typeof v.id === 'string')));
+    const [shifts, setShifts] = useState<Shift[]>(() => loadValidatedState('club_shifts', [], (v: any): v is Shift[] => Array.isArray(v)));
+    const [currentShift, setCurrentShift] = useState<Shift | null>(null);
+    const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => loadValidatedState('club_audit_logs', [], (v: any): v is AuditLog[] => Array.isArray(v)));
+    const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+
+    // Guest Management
+    const [guests, setGuests] = useState<Guest[]>(() => loadValidatedState('club_guests', [], (v: any): v is Guest[] => Array.isArray(v)));
+    const [reservations, setReservations] = useState<Reservation[]>(() => loadValidatedState('club_reservations', [], (v: any): v is Reservation[] => Array.isArray(v)));
+    const [waitlist, setWaitlist] = useState<WaitlistEntry[]>(() => loadValidatedState('club_waitlist', [], (v: any): v is WaitlistEntry[] => Array.isArray(v)));
+    const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
+    const [isReservationModalOpen, setIsReservationModalOpen] = useState(false);
+    const [isWaitlistModalOpen, setIsWaitlistModalOpen] = useState(false);
+    const [qrScannerOpen, setQrScannerOpen] = useState(false);
+
+    // Financial
+    const [revenueEntries, setRevenueEntries] = useState<RevenueEntry[]>(() => loadValidatedState('club_revenue', [], (v: any): v is RevenueEntry[] => Array.isArray(v)));
+    const [dailyClosings, setDailyClosings] = useState<DailyClosing[]>(() => loadValidatedState('club_closings', [], (v: any): v is DailyClosing[] => Array.isArray(v)));
+    const [isFinancialModalOpen, setIsFinancialModalOpen] = useState(false);
+
+    // Security
+    const [security, setSecurity] = useState<SecuritySettings>(() => loadValidatedState('club_security', {
+        pinEnabled: false,
+        sessionTimeout: 30,
+        requirePinForSettings: false,
+        requirePinForReports: false
+    }, (v: any): v is SecuritySettings => v && typeof v.pinEnabled === 'boolean'));
+    const [isPinLocked, setIsPinLocked] = useState(false);
+    const [pinInput, setPinInput] = useState('');
+
+    // Notifications
+    const [notifications, setNotifications] = useState<AppNotification[]>(() => loadValidatedState('club_notifications', [], (v: any): v is AppNotification[] => Array.isArray(v)));
+    const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => loadValidatedState('club_notification_settings', {
+        browserPush: false,
+        emailAlerts: false,
+        capacityAlerts: true,
+        dailyReports: false,
+        shiftReminders: false
+    }, (v: any): v is NotificationSettings => v && typeof v.browserPush === 'boolean'));
+    const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
+
+    // Offline Mode
+    const [isOnline, setIsOnline] = useState(navigator.onLine);
+    const [lastSync, setLastSync] = useState<Date | null>(() => loadValidatedState('club_last_sync', null, (v: any): v is Date | null => v === null || v instanceof Date));
+    const [syncInProgress, setSyncInProgress] = useState(false);
+    const [pendingChanges, setPendingChanges] = useState<any[]>([]);
+
+    // UX States
+    const [tabletMode, setTabletMode] = useState(false);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [voiceFeedbackEnabled, setVoiceFeedbackEnabled] = useState(false);
+
+    // Hardware
+    const [printerConnected, setPrinterConnected] = useState(false);
+    const [doorCounterConnected, setDoorCounterConnected] = useState(false);
+    const [apiKey, setApiKey] = useState<string>(() => loadValidatedState('club_api_key', '', (v: any): v is string => typeof v === 'string'));
+
     const settingsModalRef = useRef<HTMLDivElement>(null);
     const historyModalRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -623,7 +692,22 @@ const App: React.FC = () => {
         localStorage.setItem('club_settings', JSON.stringify(settings));
         localStorage.setItem('club_subscription', JSON.stringify(subscription));
         localStorage.setItem('club_tutorial_complete', JSON.stringify(tutorialStep === -1));
-    }, [counts, log, maxCapacity, theme, language, settings, subscription, tutorialStep]);
+        localStorage.setItem('club_zones', JSON.stringify(zones));
+        localStorage.setItem('club_users', JSON.stringify(users));
+        localStorage.setItem('club_current_user', JSON.stringify(currentUser));
+        localStorage.setItem('club_shifts', JSON.stringify(shifts));
+        localStorage.setItem('club_audit_logs', JSON.stringify(auditLogs));
+        localStorage.setItem('club_guests', JSON.stringify(guests));
+        localStorage.setItem('club_reservations', JSON.stringify(reservations));
+        localStorage.setItem('club_waitlist', JSON.stringify(waitlist));
+        localStorage.setItem('club_revenue', JSON.stringify(revenueEntries));
+        localStorage.setItem('club_closings', JSON.stringify(dailyClosings));
+        localStorage.setItem('club_security', JSON.stringify(security));
+        localStorage.setItem('club_notifications', JSON.stringify(notifications));
+        localStorage.setItem('club_notification_settings', JSON.stringify(notificationSettings));
+        localStorage.setItem('club_last_sync', JSON.stringify(lastSync));
+        localStorage.setItem('club_api_key', JSON.stringify(apiKey));
+    }, [counts, log, maxCapacity, theme, language, settings, subscription, tutorialStep, zones, users, currentUser, shifts, auditLogs, guests, reservations, waitlist, revenueEntries, dailyClosings, security, notifications, notificationSettings, lastSync, apiKey]);
 
     // Premium feature check
     const isPremium = useMemo(() => subscription.tier === 'premium' && subscription.isActive, [subscription]);
@@ -768,8 +852,62 @@ const App: React.FC = () => {
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [isSettingsOpen, isHistoryOpen, isAnalyticsOpen, undoStack, redoStack]);
-    
-    
+
+    // Offline Mode Detection
+    useEffect(() => {
+        const handleOnline = () => setIsOnline(true);
+        const handleOffline = () => setIsOnline(false);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
+    // PIN Lock Timer
+    useEffect(() => {
+        if (!security.pinEnabled || !security.sessionTimeout) return;
+
+        let timeout: NodeJS.Timeout;
+        const resetTimer = () => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => {
+                if (security.pinEnabled) setIsPinLocked(true);
+            }, security.sessionTimeout * 60 * 1000);
+        };
+
+        window.addEventListener('mousemove', resetTimer);
+        window.addEventListener('keypress', resetTimer);
+        resetTimer();
+
+        return () => {
+            clearTimeout(timeout);
+            window.removeEventListener('mousemove', resetTimer);
+            window.removeEventListener('keypress', resetTimer);
+        };
+    }, [security.pinEnabled, security.sessionTimeout]);
+
+    // Browser Notifications Permission
+    useEffect(() => {
+        if (notificationSettings.browserPush && 'Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }, [notificationSettings.browserPush]);
+
+    // Fullscreen change detection
+    useEffect(() => {
+        const handleFullscreenChange = () => {
+            setIsFullscreen(!!document.fullscreenElement);
+        };
+
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    }, []);
+
+
     // ========= HANDLER-FUNKTIONEN ========= //
     
     const handleLog = useCallback((gender: Gender, action: 'in' | 'out'): number => {
@@ -996,6 +1134,281 @@ const App: React.FC = () => {
             localStorage.clear();
         }
     };
+
+    // ========= NEW FEATURE HANDLERS ========= //
+
+    // Audit Log Helper
+    const addAuditLog = useCallback((action: string, details: string) => {
+        if (!currentUser) return;
+        const newLog: AuditLog = {
+            id: Date.now(),
+            timestamp: new Date(),
+            userId: currentUser.id,
+            action,
+            details,
+        };
+        setAuditLogs(prev => [newLog, ...prev].slice(0, 1000)); // Keep last 1000 logs
+    }, [currentUser]);
+
+    // Zone Management Handlers
+    const handleAddZone = useCallback((zone: Omit<Zone, 'id' | 'currentCount'>) => {
+        const newZone: Zone = {
+            ...zone,
+            id: Date.now().toString(),
+            currentCount: 0,
+        };
+        setZones(prev => [...prev, newZone]);
+        addAuditLog('zone_added', `Added zone: ${zone.name}`);
+    }, [addAuditLog]);
+
+    const handleUpdateZone = useCallback((zoneId: string, updates: Partial<Zone>) => {
+        setZones(prev => prev.map(z => z.id === zoneId ? { ...z, ...updates } : z));
+        addAuditLog('zone_updated', `Updated zone: ${zoneId}`);
+    }, [addAuditLog]);
+
+    const handleDeleteZone = useCallback((zoneId: string) => {
+        setZones(prev => prev.filter(z => z.id !== zoneId));
+        addAuditLog('zone_deleted', `Deleted zone: ${zoneId}`);
+    }, [addAuditLog]);
+
+    // Team Management Handlers
+    const handleAddUser = useCallback((user: Omit<User, 'id' | 'createdAt'>) => {
+        const newUser: User = {
+            ...user,
+            id: Date.now().toString(),
+            createdAt: new Date(),
+        };
+        setUsers(prev => [...prev, newUser]);
+        addAuditLog('user_added', `Added user: ${user.name}`);
+    }, [addAuditLog]);
+
+    const handleStartShift = useCallback(() => {
+        if (!currentUser || currentShift) return;
+        const newShift: Shift = {
+            id: Date.now().toString(),
+            userId: currentUser.id,
+            startTime: new Date(),
+            endTime: null,
+            zoneId: selectedZone,
+        };
+        setShifts(prev => [...prev, newShift]);
+        setCurrentShift(newShift);
+        addAuditLog('shift_started', `Started shift`);
+    }, [currentUser, currentShift, selectedZone, addAuditLog]);
+
+    const handleEndShift = useCallback(() => {
+        if (!currentShift) return;
+        const endTime = new Date();
+        setShifts(prev => prev.map(s =>
+            s.id === currentShift.id ? { ...s, endTime } : s
+        ));
+        setCurrentShift(null);
+        addAuditLog('shift_ended', `Ended shift`);
+    }, [currentShift, addAuditLog]);
+
+    // Guest Management Handlers
+    const handleAddGuest = useCallback((guest: Omit<Guest, 'id' | 'qrCode'>) => {
+        const newGuest: Guest = {
+            ...guest,
+            id: Date.now().toString(),
+            qrCode: `VPG-${Date.now()}`,
+        };
+        setGuests(prev => [...prev, newGuest]);
+        addAuditLog('guest_added', `Added guest: ${guest.name}`);
+    }, [addAuditLog]);
+
+    const handleGuestCheckIn = useCallback((guestId: string) => {
+        setGuests(prev => prev.map(g =>
+            g.id === guestId ? { ...g, checkInTime: new Date() } : g
+        ));
+        addAuditLog('guest_checkin', `Guest checked in: ${guestId}`);
+    }, [addAuditLog]);
+
+    const handleGuestCheckOut = useCallback((guestId: string) => {
+        setGuests(prev => prev.map(g =>
+            g.id === guestId ? { ...g, checkOutTime: new Date() } : g
+        ));
+        addAuditLog('guest_checkout', `Guest checked out: ${guestId}`);
+    }, [addAuditLog]);
+
+    // Reservation Handlers
+    const handleAddReservation = useCallback((reservation: Omit<Reservation, 'id' | 'createdAt'>) => {
+        const newReservation: Reservation = {
+            ...reservation,
+            id: Date.now().toString(),
+            createdAt: new Date(),
+        };
+        setReservations(prev => [...prev, newReservation]);
+        addAuditLog('reservation_added', `Added reservation for: ${reservation.guestName}`);
+    }, [addAuditLog]);
+
+    const handleUpdateReservationStatus = useCallback((id: string, status: Reservation['status']) => {
+        setReservations(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+        addAuditLog('reservation_updated', `Updated reservation ${id} to ${status}`);
+    }, [addAuditLog]);
+
+    // Waitlist Handlers
+    const handleAddToWaitlist = useCallback((entry: Omit<WaitlistEntry, 'id' | 'addedAt' | 'status'>) => {
+        const newEntry: WaitlistEntry = {
+            ...entry,
+            id: Date.now().toString(),
+            addedAt: new Date(),
+            status: 'waiting',
+        };
+        setWaitlist(prev => [...prev, newEntry]);
+        addAuditLog('waitlist_added', `Added to waitlist: ${entry.guestName}`);
+    }, [addAuditLog]);
+
+    const handleNotifyWaitlistGuest = useCallback((id: string) => {
+        setWaitlist(prev => prev.map(w => w.id === id ? { ...w, status: 'notified' as const } : w));
+        addAuditLog('waitlist_notified', `Notified waitlist guest: ${id}`);
+
+        // Send browser notification if enabled
+        if (notificationSettings.browserPush && 'Notification' in window && Notification.permission === 'granted') {
+            const entry = waitlist.find(w => w.id === id);
+            if (entry) {
+                new Notification('Guest Ready', {
+                    body: `${entry.guestName} - Table is ready`,
+                    icon: '/icon.png'
+                });
+            }
+        }
+    }, [addAuditLog, waitlist, notificationSettings.browserPush]);
+
+    // Financial Handlers
+    const handleAddRevenue = useCallback((amount: number, guestCount: number, zoneId?: string, notes?: string) => {
+        const newEntry: RevenueEntry = {
+            id: Date.now().toString(),
+            timestamp: new Date(),
+            amount,
+            guestCount,
+            averagePerGuest: guestCount > 0 ? amount / guestCount : 0,
+            zoneId,
+            notes,
+        };
+        setRevenueEntries(prev => [...prev, newEntry]);
+        addAuditLog('revenue_added', `Added revenue entry: ${amount} CHF`);
+    }, [addAuditLog]);
+
+    const handleDailyClosing = useCallback(() => {
+        if (!currentUser) return;
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const todayRevenue = revenueEntries.filter(e => {
+            const entryDate = new Date(e.timestamp);
+            entryDate.setHours(0, 0, 0, 0);
+            return entryDate.getTime() === today.getTime();
+        });
+
+        const totalRevenue = todayRevenue.reduce((sum, e) => sum + e.amount, 0);
+        const totalGuests = todayRevenue.reduce((sum, e) => sum + e.guestCount, 0);
+
+        const closing: DailyClosing = {
+            id: Date.now().toString(),
+            date: new Date(),
+            totalRevenue,
+            totalGuests,
+            averageRevenuePerGuest: totalGuests > 0 ? totalRevenue / totalGuests : 0,
+            closedBy: currentUser.name,
+            closedAt: new Date(),
+        };
+
+        setDailyClosings(prev => [...prev, closing]);
+        addAuditLog('daily_closing', `Daily closing completed: ${totalRevenue} CHF`);
+    }, [currentUser, revenueEntries, addAuditLog]);
+
+    // Security Handlers
+    const handleEnablePIN = useCallback((pin: string) => {
+        setSecurity(prev => ({ ...prev, pinEnabled: true, pin }));
+        addAuditLog('pin_enabled', 'PIN protection enabled');
+    }, [addAuditLog]);
+
+    const handleVerifyPIN = useCallback((inputPin: string) => {
+        if (inputPin === security.pin) {
+            setIsPinLocked(false);
+            setPinInput('');
+            return true;
+        }
+        return false;
+    }, [security.pin]);
+
+    // Notification Handlers
+    const handleAddNotification = useCallback((notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
+        const newNotification: AppNotification = {
+            ...notification,
+            id: Date.now().toString(),
+            timestamp: new Date(),
+            read: false,
+        };
+        setNotifications(prev => [newNotification, ...prev]);
+
+        // Browser notification
+        if (notificationSettings.browserPush && 'Notification' in window && Notification.permission === 'granted') {
+            new Notification(notification.title, {
+                body: notification.message,
+                icon: '/icon.png'
+            });
+        }
+    }, [notificationSettings.browserPush]);
+
+    const handleMarkNotificationRead = useCallback((id: string) => {
+        setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    }, []);
+
+    const handleMarkAllNotificationsRead = useCallback(() => {
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    }, []);
+
+    // Offline Sync Handler
+    const handleSync = useCallback(async () => {
+        setSyncInProgress(true);
+        try {
+            // Simulate sync - in production, this would sync with backend
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            setLastSync(new Date());
+            setPendingChanges([]);
+            addAuditLog('sync_completed', 'Data synchronized successfully');
+        } catch (error) {
+            console.error('Sync failed:', error);
+        } finally {
+            setSyncInProgress(false);
+        }
+    }, [addAuditLog]);
+
+    // UX Handlers
+    const handleToggleFullscreen = useCallback(() => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen();
+        } else {
+            document.exitFullscreen();
+        }
+    }, []);
+
+    const handleToggleTabletMode = useCallback(() => {
+        setTabletMode(prev => !prev);
+        addAuditLog('tablet_mode_toggled', `Tablet mode: ${!tabletMode}`);
+    }, [tabletMode, addAuditLog]);
+
+    // Hardware Handlers
+    const handlePrintReport = useCallback(() => {
+        if (!printerConnected) {
+            alert(t('hardwarePrinterDisconnected'));
+            return;
+        }
+        window.print();
+        addAuditLog('report_printed', 'Report printed');
+    }, [printerConnected, addAuditLog, t]);
+
+    const handleGenerateAPIKey = useCallback(() => {
+        const newKey = 'vp_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        setApiKey(newKey);
+        addAuditLog('api_key_generated', 'New API key generated');
+        return newKey;
+    }, [addAuditLog]);
+
+    // ========= END NEW HANDLERS ========= //
 
     const sortedLog = useMemo(() => [...log].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()), [log]);
 

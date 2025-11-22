@@ -184,7 +184,7 @@ export interface NotificationSettings {
   shiftReminders: boolean;
 }
 
-export interface Notification {
+export interface AppNotification {
   id: string;
   type: 'info' | 'warning' | 'error' | 'success';
   title: string;
