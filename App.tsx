@@ -2225,6 +2225,317 @@ const App: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Quick Info Modal - Shows summary of all new features for demo */}
+            {(isZoneModalOpen || isTeamModalOpen || isGuestModalOpen || isReservationModalOpen || isWaitlistModalOpen || isFinancialModalOpen || isNotificationModalOpen) && (
+                <div className="fixed inset-0 bg-slate-900/80 dark:bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="glass-panel rounded-3xl p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-white/40 dark:border-white/10 animate-in slide-in-from-bottom-8 duration-500">
+                        {/* Modal Header */}
+                        <div className="flex justify-between items-center mb-6">
+                            <div>
+                                <h2 className="text-3xl font-bold text-slate-800 dark:text-white mb-2">
+                                    {isZoneModalOpen && t('zonesTitle')}
+                                    {isTeamModalOpen && t('teamTitle')}
+                                    {isGuestModalOpen && t('guestsTitle')}
+                                    {isReservationModalOpen && t('reservationsTitle')}
+                                    {isWaitlistModalOpen && t('waitlistTitle')}
+                                    {isFinancialModalOpen && t('financialTitle')}
+                                    {isNotificationModalOpen && t('notificationsTitle')}
+                                </h2>
+                                <p className="text-sm text-slate-600 dark:text-slate-400">Premium Feature</p>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setIsZoneModalOpen(false);
+                                    setIsTeamModalOpen(false);
+                                    setIsGuestModalOpen(false);
+                                    setIsReservationModalOpen(false);
+                                    setIsWaitlistModalOpen(false);
+                                    setIsFinancialModalOpen(false);
+                                    setIsNotificationModalOpen(false);
+                                }}
+                                className="w-10 h-10 flex items-center justify-center rounded-full glass-panel hover:scale-110 transition-transform"
+                            >
+                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        {/* Zones Modal Content */}
+                        {isZoneModalOpen && (
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {zones.map(zone => (
+                                        <div key={zone.id} className="p-4 rounded-2xl glass-panel border border-white/20">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <h3 className="font-bold text-lg" style={{color: zone.color}}>{zone.name}</h3>
+                                                <span className={`px-2 py-1 rounded-full text-xs font-bold ${zone.enabled ? 'bg-green-500/20 text-green-700 dark:text-green-300' : 'bg-gray-500/20 text-gray-700 dark:text-gray-300'}`}>
+                                                    {zone.enabled ? t('zoneEnabled') : 'Disabled'}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between text-sm">
+                                                <span className="text-slate-600 dark:text-slate-400">{t('zoneCapacity')}: {zone.maxCapacity}</span>
+                                                <span className="font-bold">{zone.currentCount} / {zone.maxCapacity}</span>
+                                            </div>
+                                            {zone.isVIP && (
+                                                <div className="mt-2 flex items-center gap-1 text-yellow-600 dark:text-yellow-400 text-sm">
+                                                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                                                    </svg>
+                                                    <span className="font-semibold">VIP</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        const newZone: Omit<Zone, 'id' | 'currentCount'> = {
+                                            name: `Zone ${zones.length + 1}`,
+                                            maxCapacity: 100,
+                                            color: '#3b82f6',
+                                            isVIP: false,
+                                            enabled: true
+                                        };
+                                        handleAddZone(newZone);
+                                    }}
+                                    className="w-full p-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-bold transition-all hover:scale-105 shadow-lg"
+                                >
+                                    + {t('zoneAdd')}
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Team Modal Content */}
+                        {isTeamModalOpen && (
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {users.map(user => (
+                                        <div key={user.id} className="p-4 rounded-2xl glass-panel border border-white/20">
+                                            <div className="flex items-center gap-3 mb-2">
+                                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-400 to-pink-400 flex items-center justify-center text-white font-bold text-lg">
+                                                    {user.name.charAt(0)}
+                                                </div>
+                                                <div className="flex-1">
+                                                    <h3 className="font-bold">{user.name}</h3>
+                                                    <p className="text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-between items-center mt-3">
+                                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                                                    user.role === 'admin' ? 'bg-red-500/20 text-red-700 dark:text-red-300' :
+                                                    user.role === 'manager' ? 'bg-blue-500/20 text-blue-700 dark:text-blue-300' :
+                                                    'bg-green-500/20 text-green-700 dark:text-green-300'
+                                                }`}>
+                                                    {user.role === 'admin' ? t('teamRoleAdmin') : user.role === 'manager' ? t('teamRoleManager') : t('teamRoleStaff')}
+                                                </span>
+                                                <span className={`text-sm ${user.isActive ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}`}>
+                                                    {user.isActive ? '● Online' : '○ Offline'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="p-4 rounded-2xl bg-blue-50/50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                                    <h4 className="font-bold mb-2">{t('shiftsTitle')}</h4>
+                                    {currentShift ? (
+                                        <div>
+                                            <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">
+                                                {t('shiftCurrent')}: {new Date(currentShift.startTime).toLocaleTimeString(currentLocale)}
+                                            </p>
+                                            <button onClick={handleEndShift} className="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold transition-all">
+                                                {t('shiftEnd')}
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={handleStartShift} disabled={!currentUser} className="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-semibold transition-all">
+                                            {t('shiftStart')}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Guests Modal Content */}
+                        {isGuestModalOpen && (
+                            <div className="space-y-6">
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {guests.filter(g => g.checkInTime && !g.checkOutTime).map(guest => (
+                                        <div key={guest.id} className="p-4 rounded-2xl glass-panel border border-white/20 flex justify-between items-center">
+                                            <div>
+                                                <h3 className="font-bold">{guest.name}</h3>
+                                                <p className="text-sm text-slate-500 dark:text-slate-400">
+                                                    {t('guestCheckIn')}: {guest.checkInTime ? new Date(guest.checkInTime).toLocaleTimeString(currentLocale) : '-'}
+                                                </p>
+                                                {guest.phone && <p className="text-xs text-slate-400">{guest.phone}</p>}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {guest.isVIP && (
+                                                    <span className="px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-700 dark:text-yellow-300 text-xs font-bold">VIP</span>
+                                                )}
+                                                <button onClick={() => handleGuestCheckOut(guest.id)} className="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-all">
+                                                    {t('guestCheckOut')}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {guests.filter(g => g.checkInTime && !g.checkOutTime).length === 0 && (
+                                        <p className="text-center text-slate-500 dark:text-slate-400 py-8">{t('noData')}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Reservations Modal Content */}
+                        {isReservationModalOpen && (
+                            <div className="space-y-6">
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {reservations.map(reservation => (
+                                        <div key={reservation.id} className="p-4 rounded-2xl glass-panel border border-white/20">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <h3 className="font-bold">{reservation.guestName}</h3>
+                                                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                                                        {new Date(reservation.reservationTime).toLocaleString(currentLocale)}
+                                                    </p>
+                                                    <p className="text-xs text-slate-500">
+                                                        {t('reservationPartySize')}: {reservation.partySize}
+                                                    </p>
+                                                </div>
+                                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                                                    reservation.status === 'confirmed' ? 'bg-green-500/20 text-green-700 dark:text-green-300' :
+                                                    reservation.status === 'pending' ? 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-300' :
+                                                    reservation.status === 'cancelled' ? 'bg-red-500/20 text-red-700 dark:text-red-300' :
+                                                    'bg-gray-500/20 text-gray-700 dark:text-gray-300'
+                                                }`}>
+                                                    {reservation.status === 'confirmed' ? t('reservationStatusConfirmed') :
+                                                     reservation.status === 'pending' ? t('reservationStatusPending') :
+                                                     reservation.status === 'cancelled' ? t('reservationStatusCancelled') :
+                                                     t('reservationStatusCompleted')}
+                                                </span>
+                                            </div>
+                                            {reservation.notes && (
+                                                <p className="text-sm text-slate-500 italic mt-2">{reservation.notes}</p>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {reservations.length === 0 && (
+                                        <p className="text-center text-slate-500 dark:text-slate-400 py-8">{t('noData')}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Waitlist Modal Content */}
+                        {isWaitlistModalOpen && (
+                            <div className="space-y-6">
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {waitlist.map(entry => (
+                                        <div key={entry.id} className="p-4 rounded-2xl glass-panel border border-white/20 flex justify-between items-center">
+                                            <div>
+                                                <h3 className="font-bold">{entry.guestName}</h3>
+                                                <p className="text-sm text-slate-600 dark:text-slate-400">
+                                                    {t('reservationPartySize')}: {entry.partySize}
+                                                </p>
+                                                <p className="text-xs text-slate-500">
+                                                    {t('waitlistEstimatedWait')}: {entry.estimatedWaitMinutes ? t('waitlistMinutes', {minutes: entry.estimatedWaitMinutes.toString()}) : '-'}
+                                                </p>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {entry.status === 'waiting' && (
+                                                    <button onClick={() => handleNotifyWaitlistGuest(entry.id)} className="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white text-sm font-semibold transition-all">
+                                                        {t('waitlistNotify')}
+                                                    </button>
+                                                )}
+                                                {entry.status === 'notified' && (
+                                                    <span className="px-3 py-1 rounded-full bg-blue-500/20 text-blue-700 dark:text-blue-300 text-xs font-bold">
+                                                        Notified
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {waitlist.length === 0 && (
+                                        <p className="text-center text-slate-500 dark:text-slate-400 py-8">{t('noData')}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Financial Modal Content */}
+                        {isFinancialModalOpen && (
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="p-6 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-600 text-white">
+                                        <h3 className="text-sm font-semibold opacity-90 mb-2">{t('financialTotalRevenue')}</h3>
+                                        <p className="text-3xl font-bold">
+                                            {revenueEntries.reduce((sum, e) => sum + e.amount, 0).toFixed(2)} CHF
+                                        </p>
+                                    </div>
+                                    <div className="p-6 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-600 text-white">
+                                        <h3 className="text-sm font-semibold opacity-90 mb-2">{t('financialAveragePerGuest')}</h3>
+                                        <p className="text-3xl font-bold">
+                                            {revenueEntries.length > 0
+                                                ? (revenueEntries.reduce((sum, e) => sum + e.amount, 0) / revenueEntries.reduce((sum, e) => sum + e.guestCount, 0)).toFixed(2)
+                                                : '0.00'} CHF
+                                        </p>
+                                    </div>
+                                </div>
+                                {currentUser && (
+                                    <button onClick={handleDailyClosing} className="w-full p-4 rounded-2xl bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold transition-all hover:scale-105 shadow-lg">
+                                        {t('financialCloseDay')}
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Notifications Modal Content */}
+                        {isNotificationModalOpen && (
+                            <div className="space-y-6">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="font-bold">{notifications.filter(n => !n.read).length} {t('notificationsTitle')}</h3>
+                                    {notifications.some(n => !n.read) && (
+                                        <button onClick={handleMarkAllNotificationsRead} className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 font-semibold">
+                                            {t('notificationsMarkAllRead')}
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="space-y-3 max-h-96 overflow-y-auto">
+                                    {notifications.map(notification => (
+                                        <div
+                                            key={notification.id}
+                                            className={`p-4 rounded-2xl glass-panel border cursor-pointer transition-all hover:scale-102 ${
+                                                notification.read ? 'border-white/10 opacity-60' : 'border-white/30'
+                                            }`}
+                                            onClick={() => handleMarkNotificationRead(notification.id)}
+                                        >
+                                            <div className="flex items-start gap-3">
+                                                <div className={`w-2 h-2 rounded-full mt-2 ${
+                                                    notification.type === 'error' ? 'bg-red-500' :
+                                                    notification.type === 'warning' ? 'bg-yellow-500' :
+                                                    notification.type === 'success' ? 'bg-green-500' :
+                                                    'bg-blue-500'
+                                                }`} />
+                                                <div className="flex-1">
+                                                    <h4 className="font-bold mb-1">{notification.title}</h4>
+                                                    <p className="text-sm text-slate-600 dark:text-slate-400">{notification.message}</p>
+                                                    <p className="text-xs text-slate-500 mt-2">
+                                                        {new Date(notification.timestamp).toLocaleString(currentLocale)}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {notifications.length === 0 && (
+                                        <p className="text-center text-slate-500 dark:text-slate-400 py-8">{t('noData')}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </>
     );
 };
