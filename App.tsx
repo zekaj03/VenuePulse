@@ -1,5 +1,10 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Gender, LogEntry, CapacityThreshold, UndoAction, SubscriptionStatus, SubscriptionTier } from './types';
+import {
+  Gender, LogEntry, CapacityThreshold, UndoAction, SubscriptionStatus, SubscriptionTier,
+  Zone, User, UserRole, Shift, AuditLog, Guest, Reservation, WaitlistEntry,
+  DailyReport, PeakHour, RevenueEntry, DailyClosing, Notification, NotificationSettings,
+  SecuritySettings, AppSettings as NewAppSettings
+} from './types';
 import { languages, translations } from './locales';
 import AnalyticsDashboard from './AnalyticsDashboard';
 
