@@ -34,6 +34,7 @@ const enTranslations = {
   logIn: 'In',
   logOut: 'Out',
   noActivity: 'No activity recorded.',
+  noData: 'No data available.',
 
   // Alerts
   capacityReachedAlert: 'Maximum capacity reached!',
@@ -373,6 +374,7 @@ export const translations: { [key: string]: TranslationKeys } = {
     logIn: 'Rein',
     logOut: 'Raus',
     noActivity: 'Keine Aktivität verzeichnet.',
+    noData: 'Keine Daten verfügbar.',
 
     // Alerts
     capacityReachedAlert: 'Maximale Kapazität erreicht!',
@@ -698,6 +700,7 @@ export const translations: { [key: string]: TranslationKeys } = {
     logIn: 'Entrée',
     logOut: 'Sortie',
     noActivity: 'Aucune activité enregistrée.',
+    noData: 'Aucune donnée disponible.',
     capacityReachedAlert: 'Capacité maximale atteinte !',
     close: 'Fermer',
     settingsTitle: 'Paramètres',
@@ -1009,6 +1012,7 @@ export const translations: { [key: string]: TranslationKeys } = {
     logIn: 'Entra',
     logOut: 'Sale',
     noActivity: 'No hay actividad registrada.',
+    noData: 'No hay datos disponibles.',
     capacityReachedAlert: '¡Se ha alcanzado la capacidad máxima!',
     close: 'Cerrar',
     settingsTitle: 'Configuración',

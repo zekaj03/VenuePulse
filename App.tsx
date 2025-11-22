@@ -1412,25 +1412,6 @@ const App: React.FC = () => {
 
     const sortedLog = useMemo(() => [...log].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()), [log]);
 
-    const filteredLog = useMemo(() => {
-        if (!historySearchTerm) return sortedLog;
-        const searchLower = historySearchTerm.toLowerCase();
-        return sortedLog.filter(entry =>
-            logGenderMap[entry.gender].toLowerCase().includes(searchLower) ||
-            (entry.action === 'in' ? t('logIn') : t('logOut')).toLowerCase().includes(searchLower) ||
-            entry.note?.toLowerCase().includes(searchLower) ||
-            formatTime(entry.timestamp, settings.advanced.timeFormat, currentLocale).includes(searchLower)
-        );
-    }, [sortedLog, historySearchTerm, logGenderMap, t, settings.advanced.timeFormat, currentLocale]);
-    
-    const tutorialSteps = useMemo(() => [
-        { selector: '#total-guests-card', text: t('tutorialStep1') },
-        { selector: '#capacity-bar', text: t('tutorialStep2') },
-        { selector: '.counter-grid', text: t('tutorialStep3') },
-        { selector: '#activity-log', text: t('tutorialStep4') },
-        { selector: '#settings-button', text: t('tutorialStep5') },
-    ], [t]);
-
     const counterCardGenderMap = useMemo(() => ({
         [Gender.Male]: t('genderMale'),
         [Gender.Female]: t('genderFemale'),
@@ -1442,6 +1423,25 @@ const App: React.FC = () => {
         [Gender.Female]: t('logFemale'),
         [Gender.Other]: t('logOther'),
     }), [t]);
+
+    const filteredLog = useMemo(() => {
+        if (!historySearchTerm) return sortedLog;
+        const searchLower = historySearchTerm.toLowerCase();
+        return sortedLog.filter(entry =>
+            logGenderMap[entry.gender].toLowerCase().includes(searchLower) ||
+            (entry.action === 'in' ? t('logIn') : t('logOut')).toLowerCase().includes(searchLower) ||
+            entry.note?.toLowerCase().includes(searchLower) ||
+            formatTime(entry.timestamp, settings.advanced.timeFormat, currentLocale).includes(searchLower)
+        );
+    }, [sortedLog, historySearchTerm, logGenderMap, t, settings.advanced.timeFormat, currentLocale]);
+
+    const tutorialSteps = useMemo(() => [
+        { selector: '#total-guests-card', text: t('tutorialStep1') },
+        { selector: '#capacity-bar', text: t('tutorialStep2') },
+        { selector: '.counter-grid', text: t('tutorialStep3') },
+        { selector: '#activity-log', text: t('tutorialStep4') },
+        { selector: '#settings-button', text: t('tutorialStep5') },
+    ], [t]);
     
     const currentTutorialStep = tutorialStep >= 0 && tutorialStep < tutorialSteps.length ? tutorialSteps[tutorialStep] : null;
     const tutorialTarget = currentTutorialStep ? document.querySelector(currentTutorialStep.selector) : null;
