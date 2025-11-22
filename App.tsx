@@ -7,7 +7,6 @@ import {
 } from './types';
 import { languages, translations } from './locales';
 import AnalyticsDashboard from './AnalyticsDashboard';
-import { StripeCheckout } from './components/StripeCheckout';
 
 // ========= TYPEN & VALIDIERUNGEN ========= //
 
@@ -2192,11 +2191,19 @@ const App: React.FC = () => {
                                         <div className="space-y-3">
                                             <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-center mb-4">{t('paymentMethodTitle')}</h4>
 
-                                            <StripeCheckout
-                                                onSuccess={handlePaymentSuccess}
-                                                onError={handlePaymentError}
-                                                onCancel={handlePaymentCancel}
-                                            />
+                                            {/* PayPal Payment Button */}
+                                            <button
+                                                onClick={() => {
+                                                    // TODO: Implement PayPal integration
+                                                    alert('PayPal-Integration wird bald verfügbar sein. Bitte konfigurieren Sie Ihr PayPal-Geschäftskonto.');
+                                                }}
+                                                className="w-full bg-yellow-400 text-blue-900 rounded-lg p-4 flex items-center justify-center gap-2 hover:bg-yellow-500 transition-colors"
+                                            >
+                                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944.901C5.026.382 5.474 0 5.998 0h7.46c2.57 0 4.578.543 5.69 1.81 1.01 1.15 1.304 2.42 1.012 4.287-.023.143-.047.288-.077.437-.983 5.05-4.349 6.797-8.647 6.797h-2.19c-.524 0-.968.382-1.05.9l-1.12 7.106zm14.146-14.42a3.35 3.35 0 0 0-.607-.541c-.013.076-.026.175-.041.254-.93 4.778-4.005 7.201-9.138 7.201h-2.19a.563.563 0 0 0-.556.479l-1.187 7.527-.338 2.145a.525.525 0 0 0 .518.611h3.671a.867.867 0 0 0 .858-.738l.035-.177.671-4.262.043-.23a.87.87 0 0 1 .858-.739h.539c3.72 0 6.627-1.512 7.477-5.884.354-1.832.166-3.361-.698-4.426z"/>
+                                                </svg>
+                                                <span>Mit PayPal bezahlen</span>
+                                            </button>
                                         </div>
 
                                         {/* Payment Error */}
