@@ -7,6 +7,7 @@ import {
 } from './types';
 import { languages, translations } from './locales';
 import AnalyticsDashboard from './AnalyticsDashboard';
+import { StripeCheckout } from './components/StripeCheckout';
 
 // ========= TYPEN & VALIDIERUNGEN ========= //
 
@@ -860,6 +861,22 @@ const App: React.FC = () => {
         }
     }, [restoreMessage]);
 
+    // Handle payment success from Stripe redirect
+    useEffect(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const paymentStatus = urlParams.get('payment');
+
+        if (paymentStatus === 'success') {
+            handlePaymentSuccess();
+            // Clean up URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (paymentStatus === 'cancel') {
+            setPaymentError(t('paymentCanceled') || 'Payment was canceled');
+            // Clean up URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+    }, [handlePaymentSuccess, t]);
+
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             // Escape to close modals
@@ -1101,49 +1118,34 @@ const App: React.FC = () => {
         exportToJson(exportData, `venuepulse_export_${new Date().toISOString().split('T')[0]}.json`);
     }, [dailyHistory, log, counts, maxCapacity]);
 
-    // Payment handlers for different payment methods
-    const handlePayment = useCallback(async (paymentMethod: 'card' | 'apple_pay' | 'google_pay' | 'paypal') => {
-        setPaymentProcessing(true);
+    // Payment success handler - called after successful Stripe payment
+    const handlePaymentSuccess = useCallback(() => {
+        // Activate premium subscription
+        const expiresAt = new Date();
+        expiresAt.setMonth(expiresAt.getMonth() + 1);
+        setSubscription({
+            tier: 'premium',
+            isActive: true,
+            expiresAt,
+        });
         setPaymentError(null);
-
-        try {
-            // PRODUCTION: Replace this with actual Stripe/PayPal API call
-            // For Card, Apple Pay, Google Pay: Use Stripe
-            // For PayPal: Use PayPal SDK or Stripe with PayPal
-            // const response = await fetch('/api/create-subscription', {
-            //     method: 'POST',
-            //     headers: { 'Content-Type': 'application/json' },
-            //     body: JSON.stringify({
-            //         paymentMethod,
-            //         priceId: 'price_XXXXX', // Your Stripe Price ID
-            //     }),
-            // });
-            // const data = await response.json();
-
-            // Mock payment processing - DISABLED FOR PRODUCTION
-            await new Promise(resolve => setTimeout(resolve, 1500));
-
-            // Payment integration not yet implemented
-            throw new Error('Payment system not yet configured. Please contact support to activate Premium features.');
-
-            // UNCOMMENT BELOW WHEN PAYMENT GATEWAY IS CONFIGURED:
-            // // Success - activate premium
-            // const expiresAt = new Date();
-            // expiresAt.setMonth(expiresAt.getMonth() + 1);
-            // setSubscription({
-            //     tier: 'premium',
-            //     isActive: true,
-            //     expiresAt,
-            // });
-            // setRestoreMessage({ type: 'success', text: t('paymentSuccess') });
-            // setIsSubscriptionOpen(false);
-        } catch (error) {
-            console.error('Payment error:', error);
-            setPaymentError(error instanceof Error ? error.message : t('paymentError'));
-        } finally {
-            setPaymentProcessing(false);
-        }
+        setIsSubscriptionOpen(false);
+        // Show success message
+        setTimeout(() => {
+            alert(t('paymentSuccess'));
+        }, 100);
     }, [t]);
+
+    // Payment error handler
+    const handlePaymentError = useCallback((error: string) => {
+        setPaymentError(error);
+        setPaymentProcessing(false);
+    }, []);
+
+    // Payment cancel handler
+    const handlePaymentCancel = useCallback(() => {
+        setIsSubscriptionOpen(false);
+    }, []);
 
     const handleCancelSubscription = useCallback(() => {
         if (window.confirm(t('subscriptionCancel'))) {
@@ -2190,54 +2192,11 @@ const App: React.FC = () => {
                                         <div className="space-y-3">
                                             <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-center mb-4">{t('paymentMethodTitle')}</h4>
 
-                                            {/* Credit Card */}
-                                            <button
-                                                onClick={() => handlePayment('card')}
-                                                disabled={paymentProcessing}
-                                                className="w-full p-4 rounded-2xl bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:from-slate-400 disabled:to-slate-500 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
-                                            >
-                                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                                                    <path d="M20 4H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z"/>
-                                                </svg>
-                                                {paymentProcessing ? t('paymentProcessing') : t('paymentCreditCard')}
-                                            </button>
-
-                                            {/* Apple Pay */}
-                                            <button
-                                                onClick={() => handlePayment('apple_pay')}
-                                                disabled={paymentProcessing}
-                                                className="w-full p-4 rounded-2xl bg-black hover:bg-slate-800 disabled:bg-slate-500 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
-                                            >
-                                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                                                    <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
-                                                </svg>
-                                                {paymentProcessing ? t('paymentProcessing') : t('paymentApplePay')}
-                                            </button>
-
-                                            {/* Google Pay */}
-                                            <button
-                                                onClick={() => handlePayment('google_pay')}
-                                                disabled={paymentProcessing}
-                                                className="w-full p-4 rounded-2xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:bg-slate-300 dark:disabled:bg-slate-600 border-2 border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
-                                            >
-                                                <svg className="w-6 h-6" viewBox="0 0 24 24">
-                                                    <path fill="#EA4335" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/>
-                                                </svg>
-                                                {paymentProcessing ? t('paymentProcessing') : t('paymentGooglePay')}
-                                            </button>
-
-                                            {/* PayPal */}
-                                            <button
-                                                onClick={() => handlePayment('paypal')}
-                                                disabled={paymentProcessing}
-                                                className="w-full p-4 rounded-2xl bg-[#0070ba] hover:bg-[#005ea6] disabled:bg-slate-500 text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center gap-3 disabled:cursor-not-allowed disabled:hover:scale-100"
-                                            >
-                                                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
-                                                    <path d="M20.067 8.478c.492.88.556 2.014.3 3.327-.74 3.806-3.276 5.12-6.514 5.12h-.5a.805.805 0 00-.794.683l-.844 5.346a.683.683 0 01-.675.58h-3.46a.397.397 0 01-.393-.458l1.498-9.5h-.001l.33-2.09a.8.8 0 01.791-.683h2.41c3.242 0 5.704-.858 6.848-4.015.087.213.168.436.238.67.25.84.37 1.713.366 2.59a.72.72 0 01.001.43z"/>
-                                                    <path d="M8.715 2.607h6.376c1.018 0 1.936.202 2.653.642.848.52 1.4 1.35 1.645 2.47.07.315.11.643.117.977a7.428 7.428 0 01-.117 1.784c-.074.387-.186.76-.335 1.117-1.144 3.157-3.606 4.015-6.848 4.015h-2.41a.8.8 0 00-.791.683l-.33 2.09-.844 5.346a.397.397 0 01-.393.337h-3.46a.683.683 0 01-.675-.796L4.812 5.945a1.353 1.353 0 011.337-1.152h2.566z"/>
-                                                </svg>
-                                                {paymentProcessing ? t('paymentProcessing') : t('paymentPayPal')}
-                                            </button>
+                                            <StripeCheckout
+                                                onSuccess={handlePaymentSuccess}
+                                                onError={handlePaymentError}
+                                                onCancel={handlePaymentCancel}
+                                            />
                                         </div>
 
                                         {/* Payment Error */}
