@@ -7,6 +7,12 @@ import {
 } from './types';
 import { languages, translations } from './locales';
 import AnalyticsDashboard from './AnalyticsDashboard';
+import ConfirmModal from './components/ConfirmModal';
+import AlertModal from './components/AlertModal';
+import LogoIcon from './components/LogoIcon';
+import { generateId, generateNumericId, generateApiKey, hashPin, verifyPin } from './utils/crypto';
+import { validateBackupData, sanitizeString, clamp } from './utils/validation';
+import { usePersistEffect } from './hooks/useLocalStorage';
 
 // ========= TYPEN & VALIDIERUNGEN ========= //
 
@@ -177,7 +183,7 @@ const loadValidatedState = <T,>(key: string, defaultValue: T, validator: (value:
 
     return validator(parsedValue) ? parsedValue : defaultValue;
   } catch (error) {
-    console.error(`Fehler beim Laden des Status für Schlüssel "${key}":`, error);
+    console.error(`Failed to load state for key "${key}":`, error);
     return defaultValue;
   }
 };
@@ -200,7 +206,7 @@ const exportToCsv = (data: DailySummary[], header: string[], filename: string) =
     document.body.removeChild(link);
 };
 
-const exportToJson = (data: any, filename: string) => {
+const exportToJson = (data: Record<string, unknown>, filename: string) => {
     const jsonContent = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
     const link = document.createElement('a');
     link.setAttribute('href', jsonContent);
@@ -234,7 +240,7 @@ const formatDate = (date: Date, format: DateFormat): string => {
     }
 };
 
-const downloadBackup = (counts: any, log: any, settings: any, maxCapacity: number, theme: Theme, language: Language) => {
+const downloadBackup = (counts: {[key in Gender]: number}, log: LogEntry[], settings: AppSettings, maxCapacity: number, theme: Theme, language: Language) => {
     const backup = {
         version: '1.0',
         timestamp: new Date().toISOString(),
@@ -250,24 +256,32 @@ const downloadBackup = (counts: any, log: any, settings: any, maxCapacity: numbe
     exportToJson(backup, `venuepulse_backup_${new Date().toISOString().split('T')[0]}.json`);
 };
 
-const restoreFromBackup = (file: File, callback: (data: any) => void, errorCallback: () => void) => {
+const restoreFromBackup = (file: File, callback: (data: any) => void, errorCallback: (msg?: string) => void) => {
     const reader = new FileReader();
     reader.onload = (e) => {
         try {
             const backup = JSON.parse(e.target?.result as string);
-            if (backup.version && backup.data) {
-                // Parse timestamps in log
-                if (backup.data.log && Array.isArray(backup.data.log)) {
-                    backup.data.log.forEach((entry: any) => {
-                        entry.timestamp = new Date(entry.timestamp);
-                    });
-                }
-                callback(backup.data);
-            } else {
-                errorCallback();
+            if (!backup.version || !backup.data) {
+                errorCallback('Missing version or data in backup file');
+                return;
             }
+
+            // Validate backup data structure
+            const validation = validateBackupData(backup.data);
+            if (!validation.valid) {
+                errorCallback(validation.error);
+                return;
+            }
+
+            // Parse timestamps in log
+            if (backup.data.log && Array.isArray(backup.data.log)) {
+                backup.data.log.forEach((entry: any) => {
+                    entry.timestamp = new Date(entry.timestamp);
+                });
+            }
+            callback(backup.data);
         } catch (error) {
-            errorCallback();
+            errorCallback('Failed to parse backup file');
         }
     };
     reader.readAsText(file);
@@ -689,6 +703,10 @@ const App: React.FC = () => {
     const [doorCounterConnected, setDoorCounterConnected] = useState(false);
     const [apiKey, setApiKey] = useState<string>(() => loadValidatedState('club_api_key', '', (v: any): v is string => typeof v === 'string'));
 
+    // Modal state for replacing native alert/confirm
+    const [alertModal, setAlertModal] = useState<{ title: string; message: string; variant: 'error' | 'info' | 'success' } | null>(null);
+    const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; variant: 'danger' | 'info'; onConfirm: () => void } | null>(null);
+
     const settingsModalRef = useRef<HTMLDivElement>(null);
     const historyModalRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -711,7 +729,7 @@ const App: React.FC = () => {
         let text = (translations[language] as any)[key] || translations.en[key] || key;
         if (replacements) {
           Object.keys(replacements).forEach(rKey => {
-            text = text.replace(`{${rKey}}`, replacements[rKey]);
+            text = text.replaceAll(`{${rKey}}`, replacements[rKey]);
           });
         }
         return text;
@@ -730,31 +748,32 @@ const App: React.FC = () => {
     useFocusTrap(settingsModalRef, isSettingsOpen);
     useFocusTrap(historyModalRef, isHistoryOpen);
 
-    useEffect(() => {
-        localStorage.setItem('club_counts', JSON.stringify(counts));
-        localStorage.setItem('club_log', JSON.stringify(log));
-        localStorage.setItem('club_max_capacity', JSON.stringify(maxCapacity));
-        localStorage.setItem('club_theme', JSON.stringify(theme));
-        localStorage.setItem('club_language', JSON.stringify(language));
-        localStorage.setItem('club_settings', JSON.stringify(settings));
-        localStorage.setItem('club_subscription', JSON.stringify(subscription));
-        localStorage.setItem('club_tutorial_complete', JSON.stringify(tutorialStep === -1));
-        localStorage.setItem('club_zones', JSON.stringify(zones));
-        localStorage.setItem('club_users', JSON.stringify(users));
-        localStorage.setItem('club_current_user', JSON.stringify(currentUser));
-        localStorage.setItem('club_shifts', JSON.stringify(shifts));
-        localStorage.setItem('club_audit_logs', JSON.stringify(auditLogs));
-        localStorage.setItem('club_guests', JSON.stringify(guests));
-        localStorage.setItem('club_reservations', JSON.stringify(reservations));
-        localStorage.setItem('club_waitlist', JSON.stringify(waitlist));
-        localStorage.setItem('club_revenue', JSON.stringify(revenueEntries));
-        localStorage.setItem('club_closings', JSON.stringify(dailyClosings));
-        localStorage.setItem('club_security', JSON.stringify(security));
-        localStorage.setItem('club_notifications', JSON.stringify(notifications));
-        localStorage.setItem('club_notification_settings', JSON.stringify(notificationSettings));
-        localStorage.setItem('club_last_sync', JSON.stringify(lastSync));
-        localStorage.setItem('club_api_key', JSON.stringify(apiKey));
-    }, [counts, log, maxCapacity, theme, language, settings, subscription, tutorialStep, zones, users, currentUser, shifts, auditLogs, guests, reservations, waitlist, revenueEntries, dailyClosings, security, notifications, notificationSettings, lastSync, apiKey]);
+    // Debounced, selective localStorage persistence — only writes changed keys
+    usePersistEffect([
+        { key: 'club_counts', value: counts },
+        { key: 'club_log', value: log },
+        { key: 'club_max_capacity', value: maxCapacity },
+        { key: 'club_theme', value: theme },
+        { key: 'club_language', value: language },
+        { key: 'club_settings', value: settings },
+        { key: 'club_subscription', value: subscription },
+        { key: 'club_tutorial_complete', value: tutorialStep === -1 },
+        { key: 'club_zones', value: zones },
+        { key: 'club_users', value: users },
+        { key: 'club_current_user', value: currentUser },
+        { key: 'club_shifts', value: shifts },
+        { key: 'club_audit_logs', value: auditLogs },
+        { key: 'club_guests', value: guests },
+        { key: 'club_reservations', value: reservations },
+        { key: 'club_waitlist', value: waitlist },
+        { key: 'club_revenue', value: revenueEntries },
+        { key: 'club_closings', value: dailyClosings },
+        { key: 'club_security', value: security },
+        { key: 'club_notifications', value: notifications },
+        { key: 'club_notification_settings', value: notificationSettings },
+        { key: 'club_last_sync', value: lastSync },
+        { key: 'club_api_key', value: apiKey },
+    ]);
 
     // Premium feature check
     const isPremium = useMemo(() => subscription.tier === 'premium' && subscription.isActive, [subscription]);
@@ -960,7 +979,7 @@ const App: React.FC = () => {
     const handleLog = useCallback((gender: Gender, action: 'in' | 'out'): number => {
         let entryId = 0;
         setLog(prevLog => {
-            const newEntry: LogEntry = { id: Date.now(), timestamp: new Date(), action, gender };
+            const newEntry: LogEntry = { id: generateNumericId(), timestamp: new Date(), action, gender };
             entryId = newEntry.id;
             return [newEntry, ...prevLog];
         });
@@ -1133,45 +1152,57 @@ const App: React.FC = () => {
             setLicenseKey('');
             setIsSubscriptionOpen(false);
         } else {
-            alert(t('licenseKeyInvalid'));
+            setAlertModal({ title: t('licenseKeyTitle'), message: t('licenseKeyInvalid'), variant: 'error' });
         }
     }, [licenseKey, validateLicenseKey, t]);
 
     const handleCancelSubscription = useCallback(() => {
-        if (window.confirm(t('subscriptionCancel'))) {
-            setSubscription(prev => ({
-                ...prev,
-                isActive: false,
-            }));
-            setIsSubscriptionOpen(false);
-        }
+        setConfirmModal({
+            title: t('subscriptionTitle'),
+            message: t('subscriptionCancel'),
+            variant: 'danger',
+            onConfirm: () => {
+                setSubscription(prev => ({
+                    ...prev,
+                    isActive: false,
+                }));
+                setIsSubscriptionOpen(false);
+                setConfirmModal(null);
+            },
+        });
     }, [t]);
 
     const handleResetAllData = () => {
-        if (window.confirm(t('resetConfirmation'))) {
-            setCounts({ [Gender.Male]: 0, [Gender.Female]: 0, [Gender.Other]: 0 });
-            setLog([]);
-            setMaxCapacity(200);
-            setTheme('system');
-            setLanguage('en');
-            setSettings({
-                tones: { master: true, ui: true, guestIn: true, guestOut: true, alert: true },
-                customization: { accentColor: 'cyan', showOther: true },
-                advanced: {
-                    timeFormat: '24h',
-                    dateFormat: 'DD.MM.YYYY',
-                    dataRetentionDays: 0,
-                    capacityThresholds: [
-                        { percentage: 50, enabled: true, notified: false },
-                        { percentage: 75, enabled: true, notified: false },
-                        { percentage: 90, enabled: true, notified: false },
-                    ],
-                },
-            });
-            setUndoStack([]);
-            setRedoStack([]);
-            localStorage.clear();
-        }
+        setConfirmModal({
+            title: t('resetAllDataButton'),
+            message: t('resetConfirmation'),
+            variant: 'danger',
+            onConfirm: () => {
+                setCounts({ [Gender.Male]: 0, [Gender.Female]: 0, [Gender.Other]: 0 });
+                setLog([]);
+                setMaxCapacity(200);
+                setTheme('system');
+                setLanguage('en');
+                setSettings({
+                    tones: { master: true, ui: true, guestIn: true, guestOut: true, alert: true },
+                    customization: { accentColor: 'cyan', showOther: true },
+                    advanced: {
+                        timeFormat: '24h',
+                        dateFormat: 'DD.MM.YYYY',
+                        dataRetentionDays: 0,
+                        capacityThresholds: [
+                            { percentage: 50, enabled: true, notified: false },
+                            { percentage: 75, enabled: true, notified: false },
+                            { percentage: 90, enabled: true, notified: false },
+                        ],
+                    },
+                });
+                setUndoStack([]);
+                setRedoStack([]);
+                localStorage.clear();
+                setConfirmModal(null);
+            },
+        });
     };
 
     // ========= NEW FEATURE HANDLERS ========= //
@@ -1180,7 +1211,7 @@ const App: React.FC = () => {
     const addAuditLog = useCallback((action: string, details: string) => {
         if (!currentUser) return;
         const newLog: AuditLog = {
-            id: Date.now(),
+            id: generateNumericId(),
             timestamp: new Date(),
             userId: currentUser.id,
             action,
@@ -1193,7 +1224,7 @@ const App: React.FC = () => {
     const handleAddZone = useCallback((zone: Omit<Zone, 'id' | 'currentCount'>) => {
         const newZone: Zone = {
             ...zone,
-            id: Date.now().toString(),
+            id: generateId(),
             currentCount: 0,
         };
         setZones(prev => [...prev, newZone]);
@@ -1214,7 +1245,7 @@ const App: React.FC = () => {
     const handleAddUser = useCallback((user: Omit<User, 'id' | 'createdAt'>) => {
         const newUser: User = {
             ...user,
-            id: Date.now().toString(),
+            id: generateId(),
             createdAt: new Date(),
         };
         setUsers(prev => [...prev, newUser]);
@@ -1224,7 +1255,7 @@ const App: React.FC = () => {
     const handleStartShift = useCallback(() => {
         if (!currentUser || currentShift) return;
         const newShift: Shift = {
-            id: Date.now().toString(),
+            id: generateId(),
             userId: currentUser.id,
             startTime: new Date(),
             endTime: null,
@@ -1249,8 +1280,8 @@ const App: React.FC = () => {
     const handleAddGuest = useCallback((guest: Omit<Guest, 'id' | 'qrCode'>) => {
         const newGuest: Guest = {
             ...guest,
-            id: Date.now().toString(),
-            qrCode: `VPG-${Date.now()}`,
+            id: generateId(),
+            qrCode: `VPG-${generateId()}`,
         };
         setGuests(prev => [...prev, newGuest]);
         addAuditLog('guest_added', `Added guest: ${guest.name}`);
@@ -1274,7 +1305,7 @@ const App: React.FC = () => {
     const handleAddReservation = useCallback((reservation: Omit<Reservation, 'id' | 'createdAt'>) => {
         const newReservation: Reservation = {
             ...reservation,
-            id: Date.now().toString(),
+            id: generateId(),
             createdAt: new Date(),
         };
         setReservations(prev => [...prev, newReservation]);
@@ -1290,7 +1321,7 @@ const App: React.FC = () => {
     const handleAddToWaitlist = useCallback((entry: Omit<WaitlistEntry, 'id' | 'addedAt' | 'status'>) => {
         const newEntry: WaitlistEntry = {
             ...entry,
-            id: Date.now().toString(),
+            id: generateId(),
             addedAt: new Date(),
             status: 'waiting',
         };
@@ -1317,7 +1348,7 @@ const App: React.FC = () => {
     // Financial Handlers
     const handleAddRevenue = useCallback((amount: number, guestCount: number, zoneId?: string, notes?: string) => {
         const newEntry: RevenueEntry = {
-            id: Date.now().toString(),
+            id: generateId(),
             timestamp: new Date(),
             amount,
             guestCount,
@@ -1345,7 +1376,7 @@ const App: React.FC = () => {
         const totalGuests = todayRevenue.reduce((sum, e) => sum + e.guestCount, 0);
 
         const closing: DailyClosing = {
-            id: Date.now().toString(),
+            id: generateId(),
             date: new Date(),
             totalRevenue,
             totalGuests,
@@ -1359,13 +1390,16 @@ const App: React.FC = () => {
     }, [currentUser, revenueEntries, addAuditLog]);
 
     // Security Handlers
-    const handleEnablePIN = useCallback((pin: string) => {
-        setSecurity(prev => ({ ...prev, pinEnabled: true, pin }));
+    const handleEnablePIN = useCallback(async (pin: string) => {
+        const hashedValue = await hashPin(pin);
+        setSecurity(prev => ({ ...prev, pinEnabled: true, pin: hashedValue }));
         addAuditLog('pin_enabled', 'PIN protection enabled');
     }, [addAuditLog]);
 
-    const handleVerifyPIN = useCallback((inputPin: string) => {
-        if (inputPin === security.pin) {
+    const handleVerifyPIN = useCallback(async (inputPin: string) => {
+        if (!security.pin) return false;
+        const isValid = await verifyPin(inputPin, security.pin);
+        if (isValid) {
             setIsPinLocked(false);
             setPinInput('');
             return true;
@@ -1377,7 +1411,7 @@ const App: React.FC = () => {
     const handleAddNotification = useCallback((notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
         const newNotification: AppNotification = {
             ...notification,
-            id: Date.now().toString(),
+            id: generateId(),
             timestamp: new Date(),
             read: false,
         };
@@ -1433,7 +1467,7 @@ const App: React.FC = () => {
     // Hardware Handlers
     const handlePrintReport = useCallback(() => {
         if (!printerConnected) {
-            alert(t('hardwarePrinterDisconnected'));
+            setAlertModal({ title: t('hardwarePrinter'), message: t('hardwarePrinterDisconnected'), variant: 'error' });
             return;
         }
         window.print();
@@ -1441,7 +1475,7 @@ const App: React.FC = () => {
     }, [printerConnected, addAuditLog, t]);
 
     const handleGenerateAPIKey = useCallback(() => {
-        const newKey = 'vp_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        const newKey = generateApiKey();
         setApiKey(newKey);
         addAuditLog('api_key_generated', 'New API key generated');
         return newKey;
@@ -1526,7 +1560,7 @@ const App: React.FC = () => {
                      <div className="flex items-center space-x-4 group cursor-pointer">
                         <a href="/" aria-label="Reload" className="relative transition-transform group-hover:scale-110 duration-300">
                              <div className="absolute inset-0 bg-blue-500/30 blur-xl rounded-full"></div>
-                             <div className="relative w-12 h-12 text-slate-800 dark:text-white drop-shadow-lg" dangerouslySetInnerHTML={{ __html: defaultLogoSvg }}></div>
+                             <LogoIcon className="relative w-12 h-12 text-slate-800 dark:text-white drop-shadow-lg" />
                         </a>
                          <div>
                             <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-600 dark:from-white dark:to-slate-300 tracking-tight">{t('appTitle')}</h1>
@@ -1912,7 +1946,7 @@ const App: React.FC = () => {
                                     <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('sectionCapacity')}</h3>
                                     <div className="bg-white/60 dark:bg-black/20 p-6 rounded-3xl flex items-center justify-between border border-white/40 dark:border-white/5">
                                         <label htmlFor="max-capacity" className="font-medium text-slate-700 dark:text-slate-200">{t('maxCapacityLabel')}</label>
-                                        <input id="max-capacity" type="number" value={maxCapacity} onChange={e => setMaxCapacity(Math.max(1, parseInt(e.target.value) || 1))} className="bg-white dark:bg-slate-800/50 rounded-xl p-3 w-32 text-center font-bold text-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-inner text-slate-800 dark:text-white"/>
+                                        <input id="max-capacity" type="number" value={maxCapacity} min={1} max={100000} onChange={e => setMaxCapacity(clamp(Number.parseInt(e.target.value, 10) || 1, 1, 100000))} className="bg-white dark:bg-slate-800/50 rounded-xl p-3 w-32 text-center font-bold text-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-inner text-slate-800 dark:text-white"/>
                                     </div>
                                 </div>
 
@@ -2008,7 +2042,7 @@ const App: React.FC = () => {
                                     <div className="bg-white/60 dark:bg-black/20 p-6 rounded-3xl space-y-4 border border-white/40 dark:border-white/5">
                                         <div className="flex items-center justify-between">
                                             <label htmlFor="data-retention" className="font-medium text-slate-700 dark:text-slate-200">{t('dataRetentionLabel')}</label>
-                                            <select id="data-retention" value={settings.advanced.dataRetentionDays} onChange={(e) => setSettings(s => ({...s, advanced: {...s.advanced, dataRetentionDays: parseInt(e.target.value)}}))} className="bg-white dark:bg-slate-800/50 rounded-xl p-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800 dark:text-white">
+                                            <select id="data-retention" value={settings.advanced.dataRetentionDays} onChange={(e) => setSettings(s => ({...s, advanced: {...s.advanced, dataRetentionDays: Number.parseInt(e.target.value, 10) || 0}}))} className="bg-white dark:bg-slate-800/50 rounded-xl p-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800 dark:text-white">
                                                 <option value="0">{t('dataRetentionNever')}</option>
                                                 <option value="7">{t('dataRetentionDays', {days: '7'})}</option>
                                                 <option value="30">{t('dataRetentionDays', {days: '30'})}</option>
@@ -2552,6 +2586,25 @@ const App: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Alert Modal (replaces native alert()) */}
+            <AlertModal
+                isOpen={alertModal !== null}
+                title={alertModal?.title ?? ''}
+                message={alertModal?.message ?? ''}
+                variant={alertModal?.variant ?? 'info'}
+                onClose={() => setAlertModal(null)}
+            />
+
+            {/* Confirm Modal (replaces native confirm()) */}
+            <ConfirmModal
+                isOpen={confirmModal !== null}
+                title={confirmModal?.title ?? ''}
+                message={confirmModal?.message ?? ''}
+                variant={confirmModal?.variant ?? 'info'}
+                onConfirm={() => confirmModal?.onConfirm()}
+                onCancel={() => setConfirmModal(null)}
+            />
         </>
     );
 };
