@@ -303,10 +303,10 @@ interface CounterCardProps {
 }
 
 const CounterCard: React.FC<CounterCardProps> = ({ title, count, onIn, onOut, colorClass, inDisabled, t, gradientFrom, gradientTo }) => (
-  <div className="group relative glass-panel rounded-[2.5rem] p-6 text-center shadow-xl transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl flex flex-col overflow-hidden border-white/60 dark:border-white/10">
+  <div className="group relative glass-panel rounded-[2.5rem] p-6 text-center shadow-xl transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl flex flex-col border-white/60 dark:border-white/10">
     {/* Ambient Background Glow */}
-    <div className={`absolute -top-20 -right-20 w-40 h-40 rounded-full opacity-10 dark:opacity-20 blur-3xl ${gradientFrom}`}></div>
-    
+    <div className={`absolute -top-20 -right-20 w-40 h-40 rounded-full opacity-10 dark:opacity-20 blur-3xl ${gradientFrom} pointer-events-none`}></div>
+
     <div className="relative z-10 flex-grow flex flex-col justify-center mb-6">
       <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2">{title}</h2>
       <div className={`text-6xl font-light tracking-tight ${colorClass} drop-shadow-sm`}>
@@ -314,18 +314,18 @@ const CounterCard: React.FC<CounterCardProps> = ({ title, count, onIn, onOut, co
       </div>
     </div>
 
-    <div className="relative z-10 flex justify-center space-x-3 mt-auto">
-      <button 
-        onClick={onIn} 
+    <div className="relative z-10 flex justify-center gap-3 mt-auto">
+      <button
+        onClick={onIn}
         disabled={inDisabled}
-        className="flex-1 bg-gradient-to-b from-emerald-400 to-emerald-500 hover:from-emerald-300 hover:to-emerald-400 text-white font-semibold py-4 px-6 rounded-2xl shadow-lg shadow-emerald-500/20 transition-all duration-300 active:scale-95 hover:shadow-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none backdrop-blur-md"
+        className="flex-1 min-w-0 bg-gradient-to-b from-emerald-400 to-emerald-500 hover:from-emerald-300 hover:to-emerald-400 text-white font-semibold py-4 px-3 rounded-2xl shadow-lg shadow-emerald-500/20 transition-all duration-300 active:scale-95 hover:shadow-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none backdrop-blur-md"
         aria-label={t('guestInLabel', {title})}
       >
         <span className="drop-shadow-md">{t('buttonIn')}</span>
       </button>
-      <button 
-        onClick={onOut} 
-        className="flex-1 bg-gradient-to-b from-rose-400 to-rose-500 hover:from-rose-300 hover:to-rose-400 text-white font-semibold py-4 px-6 rounded-2xl shadow-lg shadow-rose-500/20 transition-all duration-300 active:scale-95 hover:shadow-rose-500/30 backdrop-blur-md"
+      <button
+        onClick={onOut}
+        className="flex-1 min-w-0 bg-gradient-to-b from-rose-400 to-rose-500 hover:from-rose-300 hover:to-rose-400 text-white font-semibold py-4 px-3 rounded-2xl shadow-lg shadow-rose-500/20 transition-all duration-300 active:scale-95 hover:shadow-rose-500/30 backdrop-blur-md"
         aria-label={t('guestOutLabel', {title})}
       >
         <span className="drop-shadow-md">{t('buttonOut')}</span>
