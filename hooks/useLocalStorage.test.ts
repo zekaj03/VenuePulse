@@ -44,11 +44,10 @@ describe('persistState', () => {
   });
 
   it('handles quota exceeded errors gracefully', () => {
-    const originalSetItem = localStorage.setItem;
     const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     // Mock QuotaExceededError
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
       const error = new DOMException('quota exceeded', 'QuotaExceededError');
       throw error;
     });
