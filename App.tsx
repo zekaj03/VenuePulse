@@ -2414,7 +2414,7 @@ const App: React.FC = () => {
                 </div>
             )}
             
-            <div className={`min-h-screen p-4 sm:p-6 lg:p-8 relative transition-all duration-500 ${isSettingsOpen || isHistoryOpen || isAnalyticsOpen ? 'blur-md scale-[0.98] opacity-50' : ''}`} aria-hidden={isSettingsOpen || isHistoryOpen || isAnalyticsOpen}>
+            <div className={`min-h-screen w-full max-w-full overflow-x-hidden p-4 sm:p-6 lg:p-8 relative transition-all duration-500 ${isSettingsOpen || isHistoryOpen || isAnalyticsOpen ? 'blur-md scale-[0.98] opacity-50' : ''}`} aria-hidden={isSettingsOpen || isHistoryOpen || isAnalyticsOpen}>
                  <header className="flex justify-between items-center mb-10 max-w-7xl mx-auto px-2">
                      <div className="flex items-center space-x-4 group cursor-pointer">
                         <a href="/" aria-label="Reload" className="relative transition-transform group-hover:scale-110 duration-300">
