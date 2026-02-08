@@ -456,13 +456,13 @@ interface CounterCardProps {
 }
 
 const CounterCard: React.FC<CounterCardProps> = ({ title, count, onIn, onOut, colorClass, inDisabled, t, gradientFrom, gradientTo }) => (
-  <div className="group relative glass-panel rounded-[2.5rem] p-6 text-center shadow-xl transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl flex flex-col border-white/60 dark:border-white/10">
+  <div className="group relative glass-panel rounded-[2.2rem] p-4 sm:p-6 text-center shadow-xl transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl flex flex-col border-white/60 dark:border-white/10">
     {/* Ambient Background Glow */}
     <div className={`absolute -top-20 -right-20 w-40 h-40 rounded-full opacity-10 dark:opacity-20 blur-3xl ${gradientFrom} pointer-events-none`}></div>
 
     <div className="relative z-10 flex-grow flex flex-col justify-center mb-6">
-      <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2">{title}</h2>
-      <div className={`text-6xl font-light tracking-tight ${colorClass} drop-shadow-sm`}>
+      <h2 className="text-[0.7rem] sm:text-sm font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1 sm:mb-2">{title}</h2>
+      <div className={`text-5xl sm:text-6xl font-light tracking-tight ${colorClass} drop-shadow-sm`}>
           {count}
       </div>
     </div>
@@ -471,14 +471,14 @@ const CounterCard: React.FC<CounterCardProps> = ({ title, count, onIn, onOut, co
       <button
         onClick={onIn}
         disabled={inDisabled}
-        className="flex-1 min-w-0 bg-gradient-to-b from-emerald-400 to-emerald-500 hover:from-emerald-300 hover:to-emerald-400 text-white font-semibold py-4 px-3 rounded-2xl shadow-lg shadow-emerald-500/20 transition-all duration-300 active:scale-95 hover:shadow-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none backdrop-blur-md"
+        className="flex-1 min-w-0 bg-gradient-to-b from-emerald-400 to-emerald-500 hover:from-emerald-300 hover:to-emerald-400 text-white font-semibold py-3 sm:py-4 px-3 text-base sm:text-lg rounded-2xl shadow-lg shadow-emerald-500/20 transition-all duration-300 active:scale-95 hover:shadow-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none backdrop-blur-md"
         aria-label={t('guestInLabel', {title})}
       >
         <span className="drop-shadow-md">{t('buttonIn')}</span>
       </button>
       <button
         onClick={onOut}
-        className="flex-1 min-w-0 bg-gradient-to-b from-rose-400 to-rose-500 hover:from-rose-300 hover:to-rose-400 text-white font-semibold py-4 px-3 rounded-2xl shadow-lg shadow-rose-500/20 transition-all duration-300 active:scale-95 hover:shadow-rose-500/30 backdrop-blur-md"
+        className="flex-1 min-w-0 bg-gradient-to-b from-rose-400 to-rose-500 hover:from-rose-300 hover:to-rose-400 text-white font-semibold py-3 sm:py-4 px-3 text-base sm:text-lg rounded-2xl shadow-lg shadow-rose-500/20 transition-all duration-300 active:scale-95 hover:shadow-rose-500/30 backdrop-blur-md"
         aria-label={t('guestOutLabel', {title})}
       >
         <span className="drop-shadow-md">{t('buttonOut')}</span>
@@ -578,12 +578,12 @@ const GenderDistributionChart: React.FC<GenderDistributionChartProps> = ({ count
   }, [counts, totalGuests, showOther]);
 
   return (
-    <div className="flex flex-col items-center justify-center py-4 relative">
+    <div className="flex flex-col items-center justify-center py-3 sm:py-4 relative">
       <div className="relative flex items-center justify-center">
         {/* Glow Effect behind chart */}
         <div className="absolute inset-0 bg-cyan-500/20 blur-3xl rounded-full transform scale-75"></div>
         
-        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90 transform drop-shadow-lg" aria-hidden="true">
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90 transform drop-shadow-lg w-[180px] h-[180px] sm:w-[220px] sm:h-[220px]" aria-hidden="true">
           <circle
             cx={size / 2}
             cy={size / 2}
@@ -614,27 +614,27 @@ const GenderDistributionChart: React.FC<GenderDistributionChartProps> = ({ count
           })}
         </svg>
         <div className="absolute flex flex-col items-center justify-center text-center pointer-events-none">
-           <p className="text-7xl font-light text-slate-800 dark:text-white tracking-tighter drop-shadow-sm">{totalGuests}</p>
-           <p className="text-slate-400 dark:text-slate-400 font-medium text-xs uppercase tracking-[0.2em] mt-1">{t('totalGuestsTitle')}</p>
+           <p className="text-6xl sm:text-7xl font-light text-slate-800 dark:text-white tracking-tighter drop-shadow-sm">{totalGuests}</p>
+           <p className="text-slate-400 dark:text-slate-400 font-medium text-xs uppercase tracking-[0.16em] sm:tracking-[0.2em] mt-1">{t('totalGuestsTitle')}</p>
         </div>
       </div>
 
-       <div className="flex justify-center items-center space-x-6 mt-8">
+       <div className="flex justify-center items-center space-x-4 sm:space-x-6 mt-6 sm:mt-8">
           <div className="flex flex-col items-center">
               <div className="w-3 h-3 rounded-full bg-blue-400 shadow-[0_0_10px_rgba(96,165,250,0.6)] mb-1"></div>
-              <p className="text-xs text-slate-500 font-medium">{t('genderMale')}</p>
-              <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{(totalGuests > 0 ? (counts[Gender.Male] / totalGuests) * 100 : 0).toFixed(0)}%</p>
+              <p className="text-[11px] sm:text-xs text-slate-500 font-medium">{t('genderMale')}</p>
+              <p className="text-base sm:text-lg font-bold text-slate-700 dark:text-slate-200">{(totalGuests > 0 ? (counts[Gender.Male] / totalGuests) * 100 : 0).toFixed(0)}%</p>
           </div>
           <div className="flex flex-col items-center">
               <div className="w-3 h-3 rounded-full bg-pink-400 shadow-[0_0_10px_rgba(244,114,182,0.6)] mb-1"></div>
-              <p className="text-xs text-slate-500 font-medium">{t('genderFemale')}</p>
-              <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{(totalGuests > 0 ? (counts[Gender.Female] / totalGuests) * 100 : 0).toFixed(0)}%</p>
+              <p className="text-[11px] sm:text-xs text-slate-500 font-medium">{t('genderFemale')}</p>
+              <p className="text-base sm:text-lg font-bold text-slate-700 dark:text-slate-200">{(totalGuests > 0 ? (counts[Gender.Female] / totalGuests) * 100 : 0).toFixed(0)}%</p>
           </div>
           {showOther && (
              <div className="flex flex-col items-center">
                 <div className="w-3 h-3 rounded-full bg-purple-400 shadow-[0_0_10px_rgba(167,139,250,0.6)] mb-1"></div>
-                <p className="text-xs text-slate-500 font-medium">{t('genderOther')}</p>
-                <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{(totalGuests > 0 ? (counts[Gender.Other] / totalGuests) * 100 : 0).toFixed(0)}%</p>
+                <p className="text-[11px] sm:text-xs text-slate-500 font-medium">{t('genderOther')}</p>
+                <p className="text-base sm:text-lg font-bold text-slate-700 dark:text-slate-200">{(totalGuests > 0 ? (counts[Gender.Other] / totalGuests) * 100 : 0).toFixed(0)}%</p>
              </div>
           )}
         </div>
@@ -2548,7 +2548,7 @@ const App: React.FC = () => {
                 {isPremium && roleView === 'manager' && (
                     <div className="max-w-7xl mx-auto mb-8 px-2">
                         <div className="glass-panel rounded-2xl p-4 shadow-xl border border-white/40 dark:border-white/10">
-                            <div className="flex items-center gap-3 overflow-x-auto pb-2">
+                            <div className="flex flex-wrap items-center gap-3 overflow-x-hidden pb-2">
                                 {/* Zones */}
                                 <button onClick={() => setIsZoneModalOpen(true)} className="flex items-center gap-2 px-4 py-2 glass-panel rounded-xl hover:scale-105 transition-all duration-200 border border-white/20 whitespace-nowrap">
                                     <svg className="w-5 h-5 text-cyan-600 dark:text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2686,7 +2686,7 @@ const App: React.FC = () => {
                         </div>
 
                         {roleView === 'door' && (
-                            <div className="glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10">
+                            <div className="hidden lg:block glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10">
                                 <div className="flex items-center justify-between gap-3 mb-4">
                                     <h3 className="text-sm uppercase tracking-[0.15em] font-semibold text-slate-500 dark:text-slate-400">{t('quickActionsTitle')}</h3>
                                     <div className="flex items-center bg-slate-200/60 dark:bg-slate-700/60 rounded-full p-1 text-xs font-semibold">
@@ -2809,7 +2809,7 @@ const App: React.FC = () => {
                     )}
 
                     <div className={`${roleView === 'manager' ? 'lg:col-span-4' : 'lg:col-span-4'} space-y-6`}>
-                        <div className="glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10">
+                        <div className={`glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10 ${roleView === 'door' ? 'lg:hidden' : ''}`}>
                             <div className="flex items-center justify-between gap-3 mb-4">
                                 <h3 className="text-sm uppercase tracking-[0.15em] font-semibold text-slate-500 dark:text-slate-400">{t('quickActionsTitle')}</h3>
                                 <div className="md:hidden flex items-center bg-slate-200/60 dark:bg-slate-700/60 rounded-full p-1 text-xs font-semibold">
@@ -3028,7 +3028,7 @@ const App: React.FC = () => {
 
                 {/* Capacity threshold alerts */}
                 {thresholdAlert && (
-                    <div className="fixed top-8 left-1/2 transform -translate-x-1/2 glass-panel bg-amber-500/90 dark:bg-amber-600/90 border-amber-400 text-white font-bold px-8 py-4 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl animate-in fade-in slide-in-from-top-4">
+                    <div className="fixed top-8 left-1/2 transform -translate-x-1/2 max-w-[calc(100vw-1rem)] w-fit glass-panel bg-amber-500/90 dark:bg-amber-600/90 border-amber-400 text-white font-bold px-8 py-4 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl animate-in fade-in slide-in-from-top-4">
                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                         {thresholdAlert}
                     </div>
@@ -3036,7 +3036,7 @@ const App: React.FC = () => {
 
                 {/* Restore success/error messages */}
                 {restoreMessage && (
-                    <div className={`fixed top-8 left-1/2 transform -translate-x-1/2 glass-panel ${restoreMessage.type === 'success' ? 'bg-emerald-500/90 dark:bg-emerald-600/90 border-emerald-400' : 'bg-rose-500/90 dark:bg-rose-600/90 border-rose-400'} text-white font-bold px-8 py-4 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl animate-in fade-in slide-in-from-top-4`}>
+                    <div className={`fixed top-8 left-1/2 transform -translate-x-1/2 max-w-[calc(100vw-1rem)] w-fit glass-panel ${restoreMessage.type === 'success' ? 'bg-emerald-500/90 dark:bg-emerald-600/90 border-emerald-400' : 'bg-rose-500/90 dark:bg-rose-600/90 border-rose-400'} text-white font-bold px-8 py-4 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl animate-in fade-in slide-in-from-top-4`}>
                          {restoreMessage.type === 'success' ? (
                              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                          ) : (
@@ -3047,20 +3047,20 @@ const App: React.FC = () => {
                 )}
 
                 {showCapacityAlert && (
-                    <div className="capacity-alert fixed top-8 left-1/2 transform -translate-x-1/2 glass-panel bg-rose-500/90 dark:bg-rose-600/90 border-rose-400 text-white font-bold px-8 py-4 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl">
+                    <div className="capacity-alert fixed top-8 left-1/2 transform -translate-x-1/2 max-w-[calc(100vw-1rem)] w-fit glass-panel bg-rose-500/90 dark:bg-rose-600/90 border-rose-400 text-white font-bold px-8 py-4 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl">
                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                         {t('capacityReachedAlert')}
                     </div>
                 )}
 
                 {smartAlertMessage && (
-                    <div className="fixed top-24 left-1/2 transform -translate-x-1/2 glass-panel bg-orange-500/90 dark:bg-orange-600/90 border-orange-400 text-white font-bold px-6 py-3 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl animate-in fade-in slide-in-from-top-4">
+                    <div className="fixed top-24 left-1/2 transform -translate-x-1/2 max-w-[calc(100vw-1rem)] w-fit glass-panel bg-orange-500/90 dark:bg-orange-600/90 border-orange-400 text-white font-bold px-6 py-3 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl animate-in fade-in slide-in-from-top-4">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" /></svg>
                         {smartAlertMessage}
                     </div>
                 )}
 
-                <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 lg:hidden w-[calc(100%-1.5rem)] max-w-md glass-panel rounded-2xl p-3 border border-white/60 dark:border-white/10 shadow-2xl">
+                <div className="hidden">
                     <div className="flex items-center justify-between gap-2 mb-2">
                         <div className="flex items-center bg-slate-200/60 dark:bg-slate-700/60 rounded-full p-1 text-xs font-semibold">
                             {[Gender.Male, Gender.Female, Gender.Other].map(gender => (
