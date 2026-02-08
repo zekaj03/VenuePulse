@@ -2428,6 +2428,29 @@ const App: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-2 sm:gap-4">
+                        <div className="sm:hidden">
+                            {canAccessManagerFeatures ? (
+                                <button
+                                    onClick={() => {
+                                        if (roleView === 'manager') {
+                                            setRoleView('door');
+                                        } else {
+                                            handleSwitchToManagerView();
+                                        }
+                                    }}
+                                    className="glass-panel px-3 py-2 rounded-xl border border-white/50 dark:border-white/10 text-xs font-semibold text-slate-700 dark:text-slate-100"
+                                >
+                                    {roleView === 'manager' ? t('doorView') : t('managerView')}
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={openManagerAuth}
+                                    className="glass-panel px-3 py-2 rounded-xl border border-white/50 dark:border-white/10 text-xs font-semibold text-slate-700 dark:text-slate-100"
+                                >
+                                    {t('managerLoginTab')}
+                                </button>
+                            )}
+                        </div>
                         <div className="hidden sm:flex items-center gap-2 glass-panel px-3 py-2 rounded-xl border border-white/40 dark:border-white/10">
                             <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400">{t('profileLabel')}</span>
                             {canAccessManagerFeatures && currentUser ? (
@@ -2810,17 +2833,8 @@ const App: React.FC = () => {
 
                     <div className={`${roleView === 'manager' ? 'lg:col-span-4' : 'lg:col-span-4'} space-y-6`}>
                         <div className={`glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10 ${roleView === 'door' ? 'lg:hidden' : ''}`}>
-                            <div className="flex items-center justify-between gap-3 mb-4">
+                            <div className="flex items-center gap-3 mb-4">
                                 <h3 className="text-sm uppercase tracking-[0.15em] font-semibold text-slate-500 dark:text-slate-400">{t('quickActionsTitle')}</h3>
-                                <div className="md:hidden flex items-center bg-slate-200/60 dark:bg-slate-700/60 rounded-full p-1 text-xs font-semibold">
-                                    {canAccessManagerFeatures && (
-                                        <button onClick={handleSwitchToManagerView} className={`px-2.5 py-1 rounded-full ${roleView === 'manager' ? 'bg-white dark:bg-slate-900 shadow' : ''}`}>{t('managerShort')}</button>
-                                    )}
-                                    <button onClick={() => setRoleView('door')} className={`px-2.5 py-1 rounded-full ${roleView === 'door' ? 'bg-white dark:bg-slate-900 shadow' : ''}`}>{t('doorShort')}</button>
-                                    {!canAccessManagerFeatures && (
-                                        <button onClick={openManagerAuth} className="px-2.5 py-1 rounded-full">{t('managerLoginTab')}</button>
-                                    )}
-                                </div>
                             </div>
                             <div className="flex items-center bg-slate-200/60 dark:bg-slate-700/60 rounded-full p-1 text-xs font-semibold mb-3 w-fit">
                                 {[Gender.Male, Gender.Female, Gender.Other].map(gender => (
