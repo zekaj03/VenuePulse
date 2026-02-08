@@ -17,6 +17,7 @@
     "@capacitor/core": "^8.0.2",
     "@capacitor/ios": "^8.0.2",
     "@revenuecat/purchases-capacitor": "^12.1.1",
+    "@vercel/kv": "^3.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

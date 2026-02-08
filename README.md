@@ -22,6 +22,25 @@ Prerequisites:
 3. Run the app (http://localhost:3001):
    `npm run dev`
 
+## Server-Backed Mode (Vercel)
+
+The app now supports shared server state via `/api/state` instead of device-only local storage.
+
+How to enable on Vercel:
+1. Add a Vercel KV (Upstash Redis) integration to the project.
+2. In Vercel project environment variables, set:
+   - `KV_REST_API_URL`
+   - `KV_REST_API_TOKEN`
+3. Set client variables (Production/Preview):
+   - `VITE_REMOTE_STATE_ENABLED=true`
+   - `VITE_VENUE_ID=venuepulse-main` (or any venue id you want)
+4. Redeploy.
+
+Behavior:
+- On app start, web clients hydrate state from `/api/state`.
+- Ongoing changes are synced back to `/api/state` in small debounced patches.
+- `localStorage` remains as offline cache, but server state is the shared source.
+
 ## Manager Profile and Access Control
 
 - Workers are restricted to `Door View`.

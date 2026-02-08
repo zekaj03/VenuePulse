@@ -2,6 +2,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { hydrateLocalStateFromServer } from './utils/remoteState';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -9,8 +10,15 @@ if (!rootElement) {
 }
 
 const root = ReactDOM.createRoot(rootElement);
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+
+const renderApp = () => {
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+};
+
+void hydrateLocalStateFromServer().finally(() => {
+  renderApp();
+});

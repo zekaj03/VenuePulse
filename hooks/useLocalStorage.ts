@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
+import { pushStatePatchToServer } from '../utils/remoteState';
 
 const DEBOUNCE_MS = 500;
 
@@ -11,7 +12,10 @@ const pendingWrites = new Map<string, unknown>();
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 
 function flushWrites() {
+  const patch: Record<string, unknown> = {};
+
   pendingWrites.forEach((value, key) => {
+    patch[key] = value;
     try {
       localStorage.setItem(key, JSON.stringify(value));
     } catch (error) {
@@ -23,6 +27,7 @@ function flushWrites() {
     }
   });
   pendingWrites.clear();
+  void pushStatePatchToServer(patch);
 }
 
 export function persistState(key: string, value: unknown): void {
