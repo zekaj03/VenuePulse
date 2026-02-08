@@ -1,4 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Purchases, CustomerInfo, PurchasesPackage, PACKAGE_TYPE } from '@revenuecat/purchases-capacitor';
 import {
   Gender, LogEntry, CapacityThreshold, UndoAction, SubscriptionStatus, SubscriptionTier,
   Zone, User, UserRole, Shift, AuditLog, Guest, Reservation, WaitlistEntry,
@@ -7,6 +9,12 @@ import {
 } from './types';
 import { languages, translations } from './locales';
 import AnalyticsDashboard from './AnalyticsDashboard';
+import ConfirmModal from './components/ConfirmModal';
+import AlertModal from './components/AlertModal';
+import LogoIcon from './components/LogoIcon';
+import { generateId, generateNumericId, generateApiKey, hashPin, verifyPin } from './utils/crypto';
+import { validateBackupData, sanitizeString, clamp } from './utils/validation';
+import { usePersistEffect } from './hooks/useLocalStorage';
 
 // ========= TYPEN & VALIDIERUNGEN ========= //
 
@@ -26,6 +34,55 @@ type AppSettings = {
   tones: ToneSettings;
   customization: CustomizationSettings;
   advanced: AdvancedSettings;
+};
+type RoleView = 'door' | 'manager';
+type IncidentSeverity = 'low' | 'medium' | 'high';
+type IncidentCategory = 'security' | 'medical' | 'vip' | 'operations';
+type LoadState = 'safe' | 'watch' | 'critical' | 'full';
+type ForecastTrend = 'rising' | 'stable' | 'falling';
+
+type IncidentLogEntry = {
+  id: string;
+  timestamp: Date;
+  zoneId: string;
+  severity: IncidentSeverity;
+  category: IncidentCategory;
+  note: string;
+  reportedBy: string;
+  resolved: boolean;
+};
+
+type HandoverReport = {
+  id: string;
+  generatedAt: Date;
+  periodStart: Date;
+  periodEnd: Date;
+  peakGuests: number;
+  peakTime: Date | null;
+  totalEntries: number;
+  incidentsCount: number;
+  unresolvedIncidentsCount: number;
+  busiestHourLabel: string;
+  summary: string;
+};
+
+const SMART_ALERT_THRESHOLDS = [80, 90, 100] as const;
+const REVENUECAT_ENTITLEMENT_ID = (import.meta.env.VITE_REVENUECAT_ENTITLEMENT_ID || 'premium').trim();
+const REVENUECAT_IOS_API_KEY = (import.meta.env.VITE_REVENUECAT_IOS_API_KEY || '').trim();
+const REVENUECAT_ANDROID_API_KEY = (import.meta.env.VITE_REVENUECAT_ANDROID_API_KEY || '').trim();
+const isManagerRole = (role?: UserRole | null): boolean => role === 'admin' || role === 'manager';
+const incidentCategoryLabelKeys: Record<IncidentCategory, keyof typeof translations.en> = {
+  security: 'incidentCategorySecurity',
+  medical: 'incidentCategoryMedical',
+  vip: 'incidentCategoryVip',
+  operations: 'incidentCategoryOperations',
+};
+
+const getRevenueCatApiKey = (): string => {
+  const platform = Capacitor.getPlatform();
+  if (platform === 'ios') return REVENUECAT_IOS_API_KEY;
+  if (platform === 'android') return REVENUECAT_ANDROID_API_KEY;
+  return '';
 };
 
 // Validatoren für das sichere Laden aus dem localStorage
@@ -63,6 +120,39 @@ const isSubscriptionStatus = (value: any): value is SubscriptionStatus =>
   isSubscriptionTier(value.tier) &&
   typeof value.isActive === 'boolean' &&
   (value.expiresAt === null || value.expiresAt instanceof Date);
+const isRoleView = (value: any): value is RoleView => value === 'door' || value === 'manager';
+const isIncidentSeverity = (value: any): value is IncidentSeverity => value === 'low' || value === 'medium' || value === 'high';
+const isIncidentCategory = (value: any): value is IncidentCategory =>
+  value === 'security' || value === 'medical' || value === 'vip' || value === 'operations';
+const isIncidentLogEntryArray = (value: any): value is IncidentLogEntry[] =>
+  Array.isArray(value) &&
+  value.every(item =>
+    item &&
+    typeof item.id === 'string' &&
+    item.timestamp instanceof Date &&
+    typeof item.zoneId === 'string' &&
+    isIncidentSeverity(item.severity) &&
+    isIncidentCategory(item.category) &&
+    typeof item.note === 'string' &&
+    typeof item.reportedBy === 'string' &&
+    typeof item.resolved === 'boolean'
+  );
+const isHandoverReportArray = (value: any): value is HandoverReport[] =>
+  Array.isArray(value) &&
+  value.every(item =>
+    item &&
+    typeof item.id === 'string' &&
+    item.generatedAt instanceof Date &&
+    item.periodStart instanceof Date &&
+    item.periodEnd instanceof Date &&
+    typeof item.peakGuests === 'number' &&
+    (item.peakTime === null || item.peakTime instanceof Date) &&
+    typeof item.totalEntries === 'number' &&
+    typeof item.incidentsCount === 'number' &&
+    typeof item.unresolvedIncidentsCount === 'number' &&
+    typeof item.busiestHourLabel === 'string' &&
+    typeof item.summary === 'string'
+  );
 
 
 // ========= HELPER-FUNKTIONEN ========= //
@@ -168,6 +258,17 @@ const loadValidatedState = <T,>(key: string, defaultValue: T, validator: (value:
     if (key === 'club_notifications' && Array.isArray(parsedValue)) {
         parsedValue.forEach(notif => notif.timestamp = new Date(notif.timestamp));
     }
+    if (key === 'club_incidents' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(entry => entry.timestamp = new Date(entry.timestamp));
+    }
+    if (key === 'club_handover_reports' && Array.isArray(parsedValue)) {
+        parsedValue.forEach(report => {
+            report.generatedAt = new Date(report.generatedAt);
+            report.periodStart = new Date(report.periodStart);
+            report.periodEnd = new Date(report.periodEnd);
+            if (report.peakTime) report.peakTime = new Date(report.peakTime);
+        });
+    }
     if (key === 'club_last_sync' && parsedValue) {
         return new Date(parsedValue) as any;
     }
@@ -177,16 +278,40 @@ const loadValidatedState = <T,>(key: string, defaultValue: T, validator: (value:
 
     return validator(parsedValue) ? parsedValue : defaultValue;
   } catch (error) {
-    console.error(`Fehler beim Laden des Status für Schlüssel "${key}":`, error);
+    console.error(`Failed to load state for key "${key}":`, error);
     return defaultValue;
   }
 };
 
 const playSound = (soundRef: React.MutableRefObject<HTMLAudioElement | null>, settings: ToneSettings, type: keyof Omit<ToneSettings, 'master'>) => {
-    if (settings.master && settings[type] && soundRef.current) {
-        soundRef.current.currentTime = 0;
-        soundRef.current.play().catch(error => console.error("Sound konnte nicht abgespielt werden:", error));
-    }
+    void soundRef;
+    void settings;
+    void type;
+};
+
+const createUiClickTone = (audioContext: AudioContext) => {
+    const now = audioContext.currentTime;
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const filter = audioContext.createBiquadFilter();
+
+    filter.type = 'highpass';
+    filter.frequency.setValueAtTime(700, now);
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1800, now);
+    osc.frequency.exponentialRampToValueAtTime(1100, now + 0.03);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.045, now + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(audioContext.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.055);
 };
 
 const exportToCsv = (data: DailySummary[], header: string[], filename: string) => {
@@ -200,7 +325,7 @@ const exportToCsv = (data: DailySummary[], header: string[], filename: string) =
     document.body.removeChild(link);
 };
 
-const exportToJson = (data: any, filename: string) => {
+const exportToJson = (data: Record<string, unknown>, filename: string) => {
     const jsonContent = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
     const link = document.createElement('a');
     link.setAttribute('href', jsonContent);
@@ -234,7 +359,41 @@ const formatDate = (date: Date, format: DateFormat): string => {
     }
 };
 
-const downloadBackup = (counts: any, log: any, settings: any, maxCapacity: number, theme: Theme, language: Language) => {
+const getLoadState = (percentage: number): LoadState => {
+    if (percentage >= 100) return 'full';
+    if (percentage >= 90) return 'critical';
+    if (percentage >= 75) return 'watch';
+    return 'safe';
+};
+
+const loadStateMeta: Record<LoadState, { labelKey: keyof typeof translations.en; textClass: string; chipClass: string; borderClass: string; }> = {
+    safe: {
+        labelKey: 'loadStateNormal',
+        textClass: 'text-emerald-700 dark:text-emerald-300',
+        chipClass: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+        borderClass: 'border-emerald-400/40',
+    },
+    watch: {
+        labelKey: 'loadStateWatch',
+        textClass: 'text-amber-700 dark:text-amber-300',
+        chipClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
+        borderClass: 'border-amber-400/40',
+    },
+    critical: {
+        labelKey: 'loadStateCritical',
+        textClass: 'text-rose-700 dark:text-rose-300',
+        chipClass: 'bg-rose-500/15 text-rose-700 dark:text-rose-300',
+        borderClass: 'border-rose-400/40',
+    },
+    full: {
+        labelKey: 'loadStateFull',
+        textClass: 'text-red-700 dark:text-red-300',
+        chipClass: 'bg-red-500/20 text-red-700 dark:text-red-300',
+        borderClass: 'border-red-400/50',
+    },
+};
+
+const downloadBackup = (counts: {[key in Gender]: number}, log: LogEntry[], settings: AppSettings, maxCapacity: number, theme: Theme, language: Language) => {
     const backup = {
         version: '1.0',
         timestamp: new Date().toISOString(),
@@ -250,24 +409,32 @@ const downloadBackup = (counts: any, log: any, settings: any, maxCapacity: numbe
     exportToJson(backup, `venuepulse_backup_${new Date().toISOString().split('T')[0]}.json`);
 };
 
-const restoreFromBackup = (file: File, callback: (data: any) => void, errorCallback: () => void) => {
+const restoreFromBackup = (file: File, callback: (data: any) => void, errorCallback: (msg?: string) => void) => {
     const reader = new FileReader();
     reader.onload = (e) => {
         try {
             const backup = JSON.parse(e.target?.result as string);
-            if (backup.version && backup.data) {
-                // Parse timestamps in log
-                if (backup.data.log && Array.isArray(backup.data.log)) {
-                    backup.data.log.forEach((entry: any) => {
-                        entry.timestamp = new Date(entry.timestamp);
-                    });
-                }
-                callback(backup.data);
-            } else {
-                errorCallback();
+            if (!backup.version || !backup.data) {
+                errorCallback('Missing version or data in backup file');
+                return;
             }
+
+            // Validate backup data structure
+            const validation = validateBackupData(backup.data);
+            if (!validation.valid) {
+                errorCallback(validation.error);
+                return;
+            }
+
+            // Parse timestamps in log
+            if (backup.data.log && Array.isArray(backup.data.log)) {
+                backup.data.log.forEach((entry: any) => {
+                    entry.timestamp = new Date(entry.timestamp);
+                });
+            }
+            callback(backup.data);
         } catch (error) {
-            errorCallback();
+            errorCallback('Failed to parse backup file');
         }
     };
     reader.readAsText(file);
@@ -289,10 +456,10 @@ interface CounterCardProps {
 }
 
 const CounterCard: React.FC<CounterCardProps> = ({ title, count, onIn, onOut, colorClass, inDisabled, t, gradientFrom, gradientTo }) => (
-  <div className="group relative glass-panel rounded-[2.5rem] p-6 text-center shadow-xl transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl flex flex-col overflow-hidden border-white/60 dark:border-white/10">
+  <div className="group relative glass-panel rounded-[2.5rem] p-6 text-center shadow-xl transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl flex flex-col border-white/60 dark:border-white/10">
     {/* Ambient Background Glow */}
-    <div className={`absolute -top-20 -right-20 w-40 h-40 rounded-full opacity-10 dark:opacity-20 blur-3xl ${gradientFrom}`}></div>
-    
+    <div className={`absolute -top-20 -right-20 w-40 h-40 rounded-full opacity-10 dark:opacity-20 blur-3xl ${gradientFrom} pointer-events-none`}></div>
+
     <div className="relative z-10 flex-grow flex flex-col justify-center mb-6">
       <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2">{title}</h2>
       <div className={`text-6xl font-light tracking-tight ${colorClass} drop-shadow-sm`}>
@@ -300,18 +467,18 @@ const CounterCard: React.FC<CounterCardProps> = ({ title, count, onIn, onOut, co
       </div>
     </div>
 
-    <div className="relative z-10 flex justify-center space-x-3 mt-auto">
-      <button 
-        onClick={onIn} 
+    <div className="relative z-10 flex justify-center gap-3 mt-auto">
+      <button
+        onClick={onIn}
         disabled={inDisabled}
-        className="flex-1 bg-gradient-to-b from-emerald-400 to-emerald-500 hover:from-emerald-300 hover:to-emerald-400 text-white font-semibold py-4 px-6 rounded-2xl shadow-lg shadow-emerald-500/20 transition-all duration-300 active:scale-95 hover:shadow-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none backdrop-blur-md"
+        className="flex-1 min-w-0 bg-gradient-to-b from-emerald-400 to-emerald-500 hover:from-emerald-300 hover:to-emerald-400 text-white font-semibold py-4 px-3 rounded-2xl shadow-lg shadow-emerald-500/20 transition-all duration-300 active:scale-95 hover:shadow-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none backdrop-blur-md"
         aria-label={t('guestInLabel', {title})}
       >
         <span className="drop-shadow-md">{t('buttonIn')}</span>
       </button>
-      <button 
-        onClick={onOut} 
-        className="flex-1 bg-gradient-to-b from-rose-400 to-rose-500 hover:from-rose-300 hover:to-rose-400 text-white font-semibold py-4 px-6 rounded-2xl shadow-lg shadow-rose-500/20 transition-all duration-300 active:scale-95 hover:shadow-rose-500/30 backdrop-blur-md"
+      <button
+        onClick={onOut}
+        className="flex-1 min-w-0 bg-gradient-to-b from-rose-400 to-rose-500 hover:from-rose-300 hover:to-rose-400 text-white font-semibold py-4 px-3 rounded-2xl shadow-lg shadow-rose-500/20 transition-all duration-300 active:scale-95 hover:shadow-rose-500/30 backdrop-blur-md"
         aria-label={t('guestOutLabel', {title})}
       >
         <span className="drop-shadow-md">{t('buttonOut')}</span>
@@ -616,9 +783,12 @@ const App: React.FC = () => {
     // Alerts
     const [thresholdAlert, setThresholdAlert] = useState<string | null>(null);
     const [restoreMessage, setRestoreMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-
-    // License key state
-    const [licenseKey, setLicenseKey] = useState('');
+    const [billingPackage, setBillingPackage] = useState<PurchasesPackage | null>(null);
+    const [billingReady, setBillingReady] = useState(false);
+    const [billingNoticeKey, setBillingNoticeKey] = useState<keyof typeof translations.en | null>(null);
+    const [billingLoading, setBillingLoading] = useState(false);
+    const [billingAction, setBillingAction] = useState<'purchase' | 'restore' | null>(null);
+    const [subscriptionManagementUrl, setSubscriptionManagementUrl] = useState<string | null>(null);
 
     // Multi-Zone Management
     const [zones, setZones] = useState<Zone[]>(() => loadValidatedState('club_zones', [
@@ -627,12 +797,26 @@ const App: React.FC = () => {
     const [selectedZone, setSelectedZone] = useState<string>('main');
     const [isZoneModalOpen, setIsZoneModalOpen] = useState(false);
     const [eventMode, setEventMode] = useState(false);
+    const [roleView, setRoleView] = useState<RoleView>(() => loadValidatedState('club_role_view', 'door', isRoleView));
+    const [quickActionGender, setQuickActionGender] = useState<Gender>(Gender.Male);
+    const [smartAlertMessage, setSmartAlertMessage] = useState<string | null>(null);
+    const [zoneAlertLevels, setZoneAlertLevels] = useState<Record<string, number>>({});
+    const [timeTick, setTimeTick] = useState(() => Date.now());
+    const [incidents, setIncidents] = useState<IncidentLogEntry[]>(() => loadValidatedState('club_incidents', [], isIncidentLogEntryArray));
+    const [incidentDraft, setIncidentDraft] = useState<{ category: IncidentCategory; severity: IncidentSeverity; note: string; zoneId: string; }>({
+        category: 'security',
+        severity: 'low',
+        note: '',
+        zoneId: 'main',
+    });
+    const [handoverReports, setHandoverReports] = useState<HandoverReport[]>(() => loadValidatedState('club_handover_reports', [], isHandoverReportArray));
+    const [activeReportId, setActiveReportId] = useState<string | null>(null);
 
     // Team Management
     const [users, setUsers] = useState<User[]>(() => loadValidatedState('club_users', [
-        { id: '1', name: 'Admin User', email: 'admin@venuepulse.com', role: 'admin' as UserRole, isActive: true, createdAt: new Date() }
+        { id: 'staff-default', name: 'Door Worker', email: 'staff@venuepulse.com', role: 'staff' as UserRole, isActive: true, createdAt: new Date() },
     ], (v: any): v is User[] => Array.isArray(v)));
-    const [currentUser, setCurrentUser] = useState<User | null>(() => loadValidatedState('club_current_user', users[0] || null, (v: any): v is User | null => v === null || (v && typeof v.id === 'string')));
+    const [currentUser, setCurrentUser] = useState<User | null>(() => loadValidatedState('club_current_user', users.find(user => user.role === 'staff') ?? users[0] ?? null, (v: any): v is User | null => v === null || (v && typeof v.id === 'string')));
     const [shifts, setShifts] = useState<Shift[]>(() => loadValidatedState('club_shifts', [], (v: any): v is Shift[] => Array.isArray(v)));
     const [currentShift, setCurrentShift] = useState<Shift | null>(null);
     const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => loadValidatedState('club_audit_logs', [], (v: any): v is AuditLog[] => Array.isArray(v)));
@@ -661,6 +845,12 @@ const App: React.FC = () => {
     }, (v: any): v is SecuritySettings => v && typeof v.pinEnabled === 'boolean'));
     const [isPinLocked, setIsPinLocked] = useState(false);
     const [pinInput, setPinInput] = useState('');
+    const [newPinInput, setNewPinInput] = useState('');
+    const [confirmPinInput, setConfirmPinInput] = useState('');
+    const [managerProfileName, setManagerProfileName] = useState('');
+    const [managerProfileEmail, setManagerProfileEmail] = useState('');
+    const [managerLoginUserId, setManagerLoginUserId] = useState('');
+    const [managerSessionVerified, setManagerSessionVerified] = useState(false);
 
     // Notifications
     const [notifications, setNotifications] = useState<AppNotification[]>(() => loadValidatedState('club_notifications', [], (v: any): v is AppNotification[] => Array.isArray(v)));
@@ -689,21 +879,41 @@ const App: React.FC = () => {
     const [doorCounterConnected, setDoorCounterConnected] = useState(false);
     const [apiKey, setApiKey] = useState<string>(() => loadValidatedState('club_api_key', '', (v: any): v is string => typeof v === 'string'));
 
+    // Modal state for replacing native alert/confirm
+    const [alertModal, setAlertModal] = useState<{ title: string; message: string; variant: 'error' | 'info' | 'success' } | null>(null);
+    const [confirmModal, setConfirmModal] = useState<{
+        title: string;
+        message: string;
+        variant: 'danger' | 'info';
+        onConfirm: () => void;
+        confirmLabel?: string;
+        cancelLabel?: string;
+    } | null>(null);
+
     const settingsModalRef = useRef<HTMLDivElement>(null);
     const historyModalRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const revenueCatConfiguredRef = useRef(false);
+    const revenueCatListenerIdRef = useRef<string | null>(null);
 
     const capacityReachedSound = useRef<HTMLAudioElement | null>(null);
-    const uiClickSound = useRef<HTMLAudioElement | null>(null);
     const guestInSound = useRef<HTMLAudioElement | null>(null);
     const guestOutSound = useRef<HTMLAudioElement | null>(null);
+    const uiAudioContextRef = useRef<AudioContext | null>(null);
+    const lastUiToneAtRef = useRef(0);
 
     // Initialize audio objects lazily
     useEffect(() => {
         capacityReachedSound.current = new Audio("data:audio/wav;base64,UklGRmIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSoAAAD/fwA/fwC/fwA/fwA/fwC/fwC/fwA/fwC/fwC/fwA/fwA/fwC/fwC/fwA/fwA/fwC/fwA/fwC/fwC/fwA/fwA/fwC/fwA/fwA/fwA/fwA/fwC/fwA/fwA/fwC/fwA/fwA/fwA=");
-        uiClickSound.current = new Audio("data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSQAAAAA/v8f/f8O/0oAUP89/1wAJf9A/2EAKf9S/2wAJf9W/z0AGv9G/zMAAf9S/xAAFP9u/zUAFv90/wcAEf9E/woA");
         guestInSound.current = new Audio("data:audio/wav;base64,UklGRlIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSYAAAAA/v8AAP8HAAMA/wMAAQALAAYACgADAAIA/v8EAAAA/v8B/wIA");
         guestOutSound.current = new Audio("data:audio/wav;base64,UklGRlIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSYAAAAAAAEA/v8D/wIAAgADAAIA/v8B/wAA/v8A/v8EAAIAAgADAAI=");
+    }, []);
+
+    useEffect(() => () => {
+        if (uiAudioContextRef.current) {
+            void uiAudioContextRef.current.close();
+            uiAudioContextRef.current = null;
+        }
     }, []);
 
     // ========= INTERNATIONALISIERUNG (i18n) ========= //
@@ -711,7 +921,7 @@ const App: React.FC = () => {
         let text = (translations[language] as any)[key] || translations.en[key] || key;
         if (replacements) {
           Object.keys(replacements).forEach(rKey => {
-            text = text.replace(`{${rKey}}`, replacements[rKey]);
+            text = text.replaceAll(`{${rKey}}`, replacements[rKey]);
           });
         }
         return text;
@@ -723,6 +933,99 @@ const App: React.FC = () => {
     const totalGuests = useMemo(() => Object.values(counts).reduce((sum: number, count: number) => sum + count, 0), [counts]);
     const capacityReached = useMemo(() => totalGuests >= maxCapacity, [totalGuests, maxCapacity]);
     const dailyHistory = useMemo(() => calculateDailyHistory(log, currentLocale), [log, currentLocale]);
+    const occupancyPercent = useMemo(() => (maxCapacity > 0 ? (totalGuests / maxCapacity) * 100 : 0), [totalGuests, maxCapacity]);
+    const appLoadState = useMemo(() => getLoadState(occupancyPercent), [occupancyPercent]);
+    const selectedZoneObject = useMemo(() => zones.find(zone => zone.id === selectedZone) ?? zones[0] ?? null, [zones, selectedZone]);
+    const activeHandoverReport = useMemo(
+        () => handoverReports.find(report => report.id === activeReportId) ?? handoverReports[0] ?? null,
+        [handoverReports, activeReportId]
+    );
+    const managerProfiles = useMemo(
+        () => users.filter(user => user.isActive && isManagerRole(user.role)),
+        [users]
+    );
+    const hasManagerAccessConfigured = useMemo(
+        () => managerProfiles.length > 0 && security.pinEnabled && Boolean(security.pin),
+        [managerProfiles.length, security.pinEnabled, security.pin]
+    );
+    const firstActiveStaffUser = useMemo(
+        () => users.find(user => user.isActive && user.role === 'staff') ?? users.find(user => user.isActive) ?? null,
+        [users]
+    );
+    const isCurrentUserManager = useMemo(() => isManagerRole(currentUser?.role), [currentUser?.role]);
+    const canAccessManagerFeatures = useMemo(
+        () => Boolean(isCurrentUserManager && managerSessionVerified),
+        [isCurrentUserManager, managerSessionVerified]
+    );
+    const capacityForecast = useMemo(() => {
+        const windowMinutes = 30;
+        const since = new Date(timeTick - (windowMinutes * 60 * 1000));
+        const recentLog = log.filter(entry => entry.timestamp >= since);
+        const ins = recentLog.filter(entry => entry.action === 'in').length;
+        const outs = recentLog.filter(entry => entry.action === 'out').length;
+        const net = ins - outs;
+        const ratePerMinute = net / windowMinutes;
+        const trend: ForecastTrend = net > 0 ? 'rising' : net < 0 ? 'falling' : 'stable';
+        const remaining = Math.max(0, maxCapacity - totalGuests);
+
+        let etaMinutes: number | null = null;
+        if (ratePerMinute > 0 && remaining > 0) {
+            etaMinutes = Math.ceil(remaining / ratePerMinute);
+        } else if (remaining === 0) {
+            etaMinutes = 0;
+        }
+
+        return {
+            trend,
+            windowMinutes,
+            ins,
+            outs,
+            etaMinutes,
+            remaining,
+        };
+    }, [log, maxCapacity, totalGuests, timeTick]);
+
+    const ensureUiAudioContext = useCallback(async (): Promise<AudioContext | null> => {
+        try {
+            const audioContext = uiAudioContextRef.current ?? new AudioContext();
+            uiAudioContextRef.current = audioContext;
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+            return audioContext;
+        } catch (error) {
+            console.error('Unable to initialize UI click tone:', error);
+            return null;
+        }
+    }, []);
+
+    const playUiClickTone = useCallback(async () => {
+        return;
+    }, []);
+
+    const applyRevenueCatCustomerInfo = useCallback((customerInfo: CustomerInfo) => {
+        const activeEntitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+        const hasPremium = Boolean(activeEntitlement?.isActive);
+        const expiresAt = activeEntitlement?.expirationDate ? new Date(activeEntitlement.expirationDate) : null;
+
+        setSubscription({
+            tier: hasPremium ? 'premium' : 'free',
+            isActive: true,
+            expiresAt,
+        });
+        setSubscriptionManagementUrl(customerInfo.managementURL ?? null);
+    }, []);
+
+    const loadRevenueCatOfferings = useCallback(async () => {
+        const offerings = await Purchases.getOfferings();
+        const availablePackages = offerings.current?.availablePackages ?? [];
+        const preferredPackage = availablePackages.find(aPackage => aPackage.packageType === PACKAGE_TYPE.MONTHLY)
+            ?? availablePackages[0]
+            ?? null;
+        setBillingPackage(preferredPackage);
+        setBillingNoticeKey(availablePackages.length === 0 ? 'subscriptionNoPackages' : null);
+        return preferredPackage;
+    }, []);
     
     
     // ========= EFFEKTE (LADEN, SPEICHERN, THEME, EVENTS) ========= //
@@ -730,34 +1033,150 @@ const App: React.FC = () => {
     useFocusTrap(settingsModalRef, isSettingsOpen);
     useFocusTrap(historyModalRef, isHistoryOpen);
 
+    // Debounced, selective localStorage persistence — only writes changed keys
+    usePersistEffect([
+        { key: 'club_counts', value: counts },
+        { key: 'club_log', value: log },
+        { key: 'club_max_capacity', value: maxCapacity },
+        { key: 'club_theme', value: theme },
+        { key: 'club_language', value: language },
+        { key: 'club_settings', value: settings },
+        { key: 'club_subscription', value: subscription },
+        { key: 'club_tutorial_complete', value: tutorialStep === -1 },
+        { key: 'club_role_view', value: roleView },
+        { key: 'club_zones', value: zones },
+        { key: 'club_users', value: users },
+        { key: 'club_current_user', value: currentUser },
+        { key: 'club_shifts', value: shifts },
+        { key: 'club_audit_logs', value: auditLogs },
+        { key: 'club_guests', value: guests },
+        { key: 'club_reservations', value: reservations },
+        { key: 'club_waitlist', value: waitlist },
+        { key: 'club_revenue', value: revenueEntries },
+        { key: 'club_closings', value: dailyClosings },
+        { key: 'club_security', value: security },
+        { key: 'club_notifications', value: notifications },
+        { key: 'club_notification_settings', value: notificationSettings },
+        { key: 'club_incidents', value: incidents },
+        { key: 'club_handover_reports', value: handoverReports },
+        { key: 'club_last_sync', value: lastSync },
+        { key: 'club_api_key', value: apiKey },
+    ]);
+
     useEffect(() => {
-        localStorage.setItem('club_counts', JSON.stringify(counts));
-        localStorage.setItem('club_log', JSON.stringify(log));
-        localStorage.setItem('club_max_capacity', JSON.stringify(maxCapacity));
-        localStorage.setItem('club_theme', JSON.stringify(theme));
-        localStorage.setItem('club_language', JSON.stringify(language));
-        localStorage.setItem('club_settings', JSON.stringify(settings));
-        localStorage.setItem('club_subscription', JSON.stringify(subscription));
-        localStorage.setItem('club_tutorial_complete', JSON.stringify(tutorialStep === -1));
-        localStorage.setItem('club_zones', JSON.stringify(zones));
-        localStorage.setItem('club_users', JSON.stringify(users));
-        localStorage.setItem('club_current_user', JSON.stringify(currentUser));
-        localStorage.setItem('club_shifts', JSON.stringify(shifts));
-        localStorage.setItem('club_audit_logs', JSON.stringify(auditLogs));
-        localStorage.setItem('club_guests', JSON.stringify(guests));
-        localStorage.setItem('club_reservations', JSON.stringify(reservations));
-        localStorage.setItem('club_waitlist', JSON.stringify(waitlist));
-        localStorage.setItem('club_revenue', JSON.stringify(revenueEntries));
-        localStorage.setItem('club_closings', JSON.stringify(dailyClosings));
-        localStorage.setItem('club_security', JSON.stringify(security));
-        localStorage.setItem('club_notifications', JSON.stringify(notifications));
-        localStorage.setItem('club_notification_settings', JSON.stringify(notificationSettings));
-        localStorage.setItem('club_last_sync', JSON.stringify(lastSync));
-        localStorage.setItem('club_api_key', JSON.stringify(apiKey));
-    }, [counts, log, maxCapacity, theme, language, settings, subscription, tutorialStep, zones, users, currentUser, shifts, auditLogs, guests, reservations, waitlist, revenueEntries, dailyClosings, security, notifications, notificationSettings, lastSync, apiKey]);
+        if (!Capacitor.isNativePlatform()) {
+            setBillingReady(false);
+            setBillingNoticeKey('subscriptionBillingUnavailable');
+            return;
+        }
+
+        const apiKey = getRevenueCatApiKey();
+        if (!apiKey) {
+            setBillingReady(false);
+            setBillingNoticeKey('subscriptionConfigMissing');
+            return;
+        }
+
+        let cancelled = false;
+
+        const initializeBilling = async () => {
+            setBillingLoading(true);
+            try {
+                if (!revenueCatConfiguredRef.current) {
+                    await Purchases.configure({ apiKey });
+                    revenueCatConfiguredRef.current = true;
+                }
+
+                if (!revenueCatListenerIdRef.current) {
+                    const listenerId = await Purchases.addCustomerInfoUpdateListener((customerInfo) => {
+                        if (cancelled) return;
+                        applyRevenueCatCustomerInfo(customerInfo);
+                    });
+                    revenueCatListenerIdRef.current = listenerId;
+                }
+
+                const customerInfoResult = await Purchases.getCustomerInfo();
+                if (cancelled) return;
+                applyRevenueCatCustomerInfo(customerInfoResult.customerInfo);
+                await loadRevenueCatOfferings();
+                if (cancelled) return;
+                setBillingReady(true);
+            } catch (error) {
+                console.error('RevenueCat initialization failed:', error);
+                if (cancelled) return;
+                setBillingReady(false);
+                setBillingNoticeKey('subscriptionBillingUnavailable');
+            } finally {
+                if (!cancelled) {
+                    setBillingLoading(false);
+                }
+            }
+        };
+
+        void initializeBilling();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [applyRevenueCatCustomerInfo, loadRevenueCatOfferings]);
+
+    useEffect(() => {
+        return () => {
+            const listenerId = revenueCatListenerIdRef.current;
+            if (!listenerId) return;
+            void Purchases.removeCustomerInfoUpdateListener({ listenerToRemove: listenerId });
+            revenueCatListenerIdRef.current = null;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (currentUser || users.length === 0) return;
+        const firstActiveUser = users.find(user => user.isActive) ?? users[0];
+        if (firstActiveUser) {
+            setCurrentUser(firstActiveUser);
+        }
+    }, [currentUser, users]);
+
+    useEffect(() => {
+        setRoleView('door');
+    }, []);
+
+    useEffect(() => {
+        if (managerProfiles.length === 0) {
+            if (managerLoginUserId) setManagerLoginUserId('');
+            return;
+        }
+        if (!managerProfiles.some(user => user.id === managerLoginUserId)) {
+            setManagerLoginUserId(managerProfiles[0]?.id ?? '');
+        }
+    }, [managerProfiles, managerLoginUserId]);
+
+    useEffect(() => {
+        if (roleView === 'manager' && !canAccessManagerFeatures) {
+            setRoleView('door');
+        }
+    }, [roleView, canAccessManagerFeatures]);
+
+    useEffect(() => {
+        if (canAccessManagerFeatures) return;
+        setIsSettingsOpen(false);
+        setIsAnalyticsOpen(false);
+        setIsZoneModalOpen(false);
+        setIsTeamModalOpen(false);
+        setIsGuestModalOpen(false);
+        setIsReservationModalOpen(false);
+        setIsWaitlistModalOpen(false);
+        setIsFinancialModalOpen(false);
+        setIsNotificationModalOpen(false);
+    }, [canAccessManagerFeatures]);
 
     // Premium feature check
     const isPremium = useMemo(() => subscription.tier === 'premium' && subscription.isActive, [subscription]);
+    const hasNativeBilling = useMemo(() => Capacitor.isNativePlatform(), []);
+    const billingPackagePrice = useMemo(
+        () => billingPackage?.product.priceString ?? t('subscriptionPrice'),
+        [billingPackage, t]
+    );
 
     // Free tier log truncation
     useEffect(() => {
@@ -859,6 +1278,100 @@ const App: React.FC = () => {
         }
     }, [restoreMessage]);
 
+    // Update forecast every minute without requiring user interactions.
+    useEffect(() => {
+        const timer = window.setInterval(() => setTimeTick(Date.now()), 60000);
+        return () => window.clearInterval(timer);
+    }, []);
+
+    // Keep the primary zone aligned with global counters.
+    useEffect(() => {
+        setZones(prev => {
+            let changed = false;
+            const next = prev.map(zone => {
+                if (zone.id !== 'main') return zone;
+                if (zone.currentCount === totalGuests && zone.maxCapacity === maxCapacity) {
+                    return zone;
+                }
+                changed = true;
+                return { ...zone, currentCount: totalGuests, maxCapacity };
+            });
+            return changed ? next : prev;
+        });
+    }, [totalGuests, maxCapacity]);
+
+    // Keep incident draft zone in sync if zones were changed.
+    useEffect(() => {
+        if (!zones.some(zone => zone.id === incidentDraft.zoneId)) {
+            setIncidentDraft(prev => ({ ...prev, zoneId: zones[0]?.id ?? 'main' }));
+        }
+    }, [zones, incidentDraft.zoneId]);
+
+    // Smart per-zone alerts at 80/90/100%.
+    useEffect(() => {
+        const nextAlertLevels: Record<string, number> = {};
+        let triggeredZone: Zone | undefined;
+        let triggeredThreshold = 0;
+
+        zones.forEach(zone => {
+            if (!zone.enabled || zone.maxCapacity <= 0) {
+                nextAlertLevels[zone.id] = 0;
+                return;
+            }
+            const pct = (zone.currentCount / zone.maxCapacity) * 100;
+            const highestTriggered = [...SMART_ALERT_THRESHOLDS].reverse().find(level => pct >= level) ?? 0;
+            const previousTriggered = zoneAlertLevels[zone.id] ?? 0;
+
+            if (highestTriggered > previousTriggered && highestTriggered > 0 && !triggeredZone) {
+                triggeredZone = zone;
+                triggeredThreshold = highestTriggered;
+            }
+            nextAlertLevels[zone.id] = highestTriggered;
+        });
+
+        const changed =
+            Object.keys(nextAlertLevels).length !== Object.keys(zoneAlertLevels).length ||
+            Object.entries(nextAlertLevels).some(([zoneId, level]) => zoneAlertLevels[zoneId] !== level);
+
+        if (changed) {
+            setZoneAlertLevels(nextAlertLevels);
+        }
+
+        if (triggeredZone && notificationSettings.capacityAlerts) {
+            const zoneName = triggeredZone.name;
+            const message = t('zoneCapacityAlertMessage', {
+                zone: zoneName,
+                percentage: String(triggeredThreshold),
+            });
+            const notificationType: AppNotification['type'] = triggeredThreshold >= 100 ? 'error' : 'warning';
+            setSmartAlertMessage(message);
+            playSound(capacityReachedSound, settings.tones, 'alert');
+            if (currentUser) {
+                setAuditLogs(prev => [{
+                    id: generateNumericId(),
+                    timestamp: new Date(),
+                    userId: currentUser.id,
+                    action: 'zone_capacity_alert',
+                    details: message,
+                }, ...prev].slice(0, 1000));
+            }
+            setNotifications(prev => [{
+                id: generateId(),
+                type: notificationType,
+                title: t('zoneCapacityAlertTitle'),
+                message,
+                timestamp: new Date(),
+                read: false,
+            }, ...prev].slice(0, 100));
+        }
+    }, [zones, zoneAlertLevels, notificationSettings.capacityAlerts, settings.tones, currentUser, t]);
+
+    useEffect(() => {
+        if (!smartAlertMessage) return;
+        const timer = window.setTimeout(() => setSmartAlertMessage(null), 4500);
+        return () => window.clearTimeout(timer);
+    }, [smartAlertMessage]);
+
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
             // Escape to close modals
@@ -884,6 +1397,7 @@ const App: React.FC = () => {
             if (!isSettingsOpen && !isHistoryOpen && !isAnalyticsOpen &&
                 !(event.target instanceof HTMLInputElement) &&
                 !(event.target instanceof HTMLTextAreaElement)) {
+                if (!canAccessManagerFeatures) return;
                 if (event.key.toLowerCase() === 's') {
                     event.preventDefault();
                     setIsSettingsOpen(true);
@@ -898,7 +1412,7 @@ const App: React.FC = () => {
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isSettingsOpen, isHistoryOpen, isAnalyticsOpen, undoStack, redoStack]);
+    }, [isSettingsOpen, isHistoryOpen, isAnalyticsOpen, undoStack.length, redoStack.length, canAccessManagerFeatures]);
 
     // Offline Mode Detection
     useEffect(() => {
@@ -916,13 +1430,19 @@ const App: React.FC = () => {
 
     // PIN Lock Timer
     useEffect(() => {
-        if (!security.pinEnabled || !security.sessionTimeout) return;
+        if (!security.pinEnabled || !security.sessionTimeout || !canAccessManagerFeatures || !currentUser || !isManagerRole(currentUser.role)) return;
 
         let timeout: NodeJS.Timeout;
         const resetTimer = () => {
             clearTimeout(timeout);
             timeout = setTimeout(() => {
-                if (security.pinEnabled) setIsPinLocked(true);
+                if (security.pinEnabled) {
+                    setManagerSessionVerified(false);
+                    setRoleView('door');
+                    setPinInput('');
+                    setIsPinLocked(false);
+                    setCurrentUser(firstActiveStaffUser);
+                }
             }, security.sessionTimeout * 60 * 1000);
         };
 
@@ -935,7 +1455,7 @@ const App: React.FC = () => {
             window.removeEventListener('mousemove', resetTimer);
             window.removeEventListener('keypress', resetTimer);
         };
-    }, [security.pinEnabled, security.sessionTimeout]);
+    }, [security.pinEnabled, security.sessionTimeout, canAccessManagerFeatures, currentUser, firstActiveStaffUser]);
 
     // Browser Notifications Permission
     useEffect(() => {
@@ -954,13 +1474,28 @@ const App: React.FC = () => {
         return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
     }, []);
 
+    // Global UI click tone on interactive elements for consistent feedback.
+    useEffect(() => {
+        const handlePointerDown = (event: PointerEvent) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            const interactive = target.closest('button, [role="button"], a[href], input[type="button"], input[type="submit"], input[type="reset"]');
+            if (!interactive) return;
+            if ((interactive as HTMLButtonElement).disabled) return;
+            void playUiClickTone();
+        };
+
+        window.addEventListener('pointerdown', handlePointerDown, true);
+        return () => window.removeEventListener('pointerdown', handlePointerDown, true);
+    }, [playUiClickTone]);
+
 
     // ========= HANDLER-FUNKTIONEN ========= //
     
     const handleLog = useCallback((gender: Gender, action: 'in' | 'out'): number => {
         let entryId = 0;
         setLog(prevLog => {
-            const newEntry: LogEntry = { id: Date.now(), timestamp: new Date(), action, gender };
+            const newEntry: LogEntry = { id: generateNumericId(), timestamp: new Date(), action, gender };
             entryId = newEntry.id;
             return [newEntry, ...prevLog];
         });
@@ -1100,78 +1635,145 @@ const App: React.FC = () => {
         exportToJson(exportData, `venuepulse_export_${new Date().toISOString().split('T')[0]}.json`);
     }, [dailyHistory, log, counts, maxCapacity]);
 
-    // License key validation
-    const validateLicenseKey = useCallback((key: string): boolean => {
-        // Format: VENUEPULSE-XXXX-XXXX-XXXX (e.g., VENUEPULSE-1A2B-3C4D-5E6F)
-        const keyPattern = /^VENUEPULSE-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
-        if (!keyPattern.test(key)) return false;
-
-        // Simple checksum validation (last segment)
-        const segments = key.split('-');
-        const checksum = segments[3];
-        const dataSegments = segments.slice(1, 3).join('');
-
-        // Calculate simple checksum (sum of char codes mod 65536, convert to hex)
-        let sum = 0;
-        for (let i = 0; i < dataSegments.length; i++) {
-            sum += dataSegments.charCodeAt(i);
-        }
-        const expectedChecksum = (sum % 65536).toString(16).toUpperCase().padStart(4, '0');
-
-        return checksum === expectedChecksum;
-    }, []);
-
-    const handleActivateLicense = useCallback(() => {
-        const trimmedKey = licenseKey.trim().toUpperCase();
-
-        if (validateLicenseKey(trimmedKey)) {
-            setSubscription({
-                tier: 'premium',
-                isActive: true,
-                expiresAt: null // Lifetime license
+    const handlePurchaseSubscription = useCallback(async () => {
+        if (!billingReady || !billingPackage) {
+            setAlertModal({
+                title: t('subscriptionTitle'),
+                message: t('subscriptionBillingUnavailable'),
+                variant: 'error',
             });
-            setLicenseKey('');
-            setIsSubscriptionOpen(false);
-        } else {
-            alert(t('licenseKeyInvalid'));
+            return;
         }
-    }, [licenseKey, validateLicenseKey, t]);
 
-    const handleCancelSubscription = useCallback(() => {
-        if (window.confirm(t('subscriptionCancel'))) {
-            setSubscription(prev => ({
-                ...prev,
-                isActive: false,
-            }));
+        setBillingAction('purchase');
+        try {
+            const purchaseResult = await Purchases.purchasePackage({ aPackage: billingPackage });
+            applyRevenueCatCustomerInfo(purchaseResult.customerInfo);
+            setAlertModal({
+                title: t('subscriptionTitle'),
+                message: t('subscriptionActivated'),
+                variant: 'success',
+            });
             setIsSubscriptionOpen(false);
+        } catch (error: any) {
+            if (error?.userCancelled) {
+                return;
+            }
+            console.error('Purchase failed:', error);
+            setAlertModal({
+                title: t('subscriptionTitle'),
+                message: t('subscriptionPurchaseFailed'),
+                variant: 'error',
+            });
+        } finally {
+            setBillingAction(null);
         }
-    }, [t]);
+    }, [billingReady, billingPackage, applyRevenueCatCustomerInfo, t]);
+
+    const handleRestoreSubscriptions = useCallback(async () => {
+        if (!billingReady) {
+            setAlertModal({
+                title: t('subscriptionTitle'),
+                message: t('subscriptionBillingUnavailable'),
+                variant: 'error',
+            });
+            return;
+        }
+
+        setBillingAction('restore');
+        try {
+            const restoreResult = await Purchases.restorePurchases();
+            applyRevenueCatCustomerInfo(restoreResult.customerInfo);
+            const hasPremium = Boolean(restoreResult.customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]);
+            setAlertModal({
+                title: t('subscriptionTitle'),
+                message: hasPremium ? t('subscriptionActivated') : t('subscriptionNoRestorablePurchases'),
+                variant: hasPremium ? 'success' : 'info',
+            });
+        } catch (error) {
+            console.error('Restore failed:', error);
+            setAlertModal({
+                title: t('subscriptionTitle'),
+                message: t('subscriptionRestoreFailed'),
+                variant: 'error',
+            });
+        } finally {
+            setBillingAction(null);
+        }
+    }, [billingReady, applyRevenueCatCustomerInfo, t]);
+
+    const handleManageSubscription = useCallback(async () => {
+        let managementUrl = subscriptionManagementUrl;
+        if (!managementUrl && billingReady) {
+            try {
+                const customerInfoResult = await Purchases.getCustomerInfo();
+                applyRevenueCatCustomerInfo(customerInfoResult.customerInfo);
+                managementUrl = customerInfoResult.customerInfo.managementURL ?? null;
+            } catch (error) {
+                console.error('Failed to refresh management URL:', error);
+            }
+        }
+
+        if (!managementUrl) {
+            setAlertModal({
+                title: t('subscriptionTitle'),
+                message: t('subscriptionManageUnavailable'),
+                variant: 'info',
+            });
+            return;
+        }
+
+        window.open(managementUrl, '_blank', 'noopener,noreferrer');
+    }, [subscriptionManagementUrl, billingReady, applyRevenueCatCustomerInfo, t]);
 
     const handleResetAllData = () => {
-        if (window.confirm(t('resetConfirmation'))) {
-            setCounts({ [Gender.Male]: 0, [Gender.Female]: 0, [Gender.Other]: 0 });
-            setLog([]);
-            setMaxCapacity(200);
-            setTheme('system');
-            setLanguage('en');
-            setSettings({
-                tones: { master: true, ui: true, guestIn: true, guestOut: true, alert: true },
-                customization: { accentColor: 'cyan', showOther: true },
-                advanced: {
-                    timeFormat: '24h',
-                    dateFormat: 'DD.MM.YYYY',
-                    dataRetentionDays: 0,
-                    capacityThresholds: [
-                        { percentage: 50, enabled: true, notified: false },
-                        { percentage: 75, enabled: true, notified: false },
-                        { percentage: 90, enabled: true, notified: false },
-                    ],
-                },
-            });
-            setUndoStack([]);
-            setRedoStack([]);
-            localStorage.clear();
-        }
+        setConfirmModal({
+            title: t('resetAllDataButton'),
+            message: t('resetConfirmation'),
+            variant: 'danger',
+            confirmLabel: t('confirmAction'),
+            cancelLabel: t('managerAccessCancel'),
+            onConfirm: () => {
+                setCounts({ [Gender.Male]: 0, [Gender.Female]: 0, [Gender.Other]: 0 });
+                setLog([]);
+                setMaxCapacity(200);
+                setTheme('system');
+                setLanguage('en');
+                setSettings({
+                    tones: { master: true, ui: true, guestIn: true, guestOut: true, alert: true },
+                    customization: { accentColor: 'cyan', showOther: true },
+                    advanced: {
+                        timeFormat: '24h',
+                        dateFormat: 'DD.MM.YYYY',
+                        dataRetentionDays: 0,
+                        capacityThresholds: [
+                            { percentage: 50, enabled: true, notified: false },
+                            { percentage: 75, enabled: true, notified: false },
+                            { percentage: 90, enabled: true, notified: false },
+                        ],
+                    },
+                });
+                setUndoStack([]);
+                setRedoStack([]);
+                setRoleView('door');
+                setManagerSessionVerified(false);
+                setIsPinLocked(false);
+                setPinInput('');
+                setNewPinInput('');
+                setConfirmPinInput('');
+                setManagerProfileName('');
+                setManagerProfileEmail('');
+                setManagerLoginUserId('');
+                setIncidents([]);
+                setHandoverReports([]);
+                setActiveReportId(null);
+                setZoneAlertLevels({});
+                setSmartAlertMessage(null);
+                setIncidentDraft({ category: 'security', severity: 'low', note: '', zoneId: 'main' });
+                localStorage.clear();
+                setConfirmModal(null);
+            },
+        });
     };
 
     // ========= NEW FEATURE HANDLERS ========= //
@@ -1180,7 +1782,7 @@ const App: React.FC = () => {
     const addAuditLog = useCallback((action: string, details: string) => {
         if (!currentUser) return;
         const newLog: AuditLog = {
-            id: Date.now(),
+            id: generateNumericId(),
             timestamp: new Date(),
             userId: currentUser.id,
             action,
@@ -1193,7 +1795,7 @@ const App: React.FC = () => {
     const handleAddZone = useCallback((zone: Omit<Zone, 'id' | 'currentCount'>) => {
         const newZone: Zone = {
             ...zone,
-            id: Date.now().toString(),
+            id: generateId(),
             currentCount: 0,
         };
         setZones(prev => [...prev, newZone]);
@@ -1214,7 +1816,7 @@ const App: React.FC = () => {
     const handleAddUser = useCallback((user: Omit<User, 'id' | 'createdAt'>) => {
         const newUser: User = {
             ...user,
-            id: Date.now().toString(),
+            id: generateId(),
             createdAt: new Date(),
         };
         setUsers(prev => [...prev, newUser]);
@@ -1224,7 +1826,7 @@ const App: React.FC = () => {
     const handleStartShift = useCallback(() => {
         if (!currentUser || currentShift) return;
         const newShift: Shift = {
-            id: Date.now().toString(),
+            id: generateId(),
             userId: currentUser.id,
             startTime: new Date(),
             endTime: null,
@@ -1249,8 +1851,8 @@ const App: React.FC = () => {
     const handleAddGuest = useCallback((guest: Omit<Guest, 'id' | 'qrCode'>) => {
         const newGuest: Guest = {
             ...guest,
-            id: Date.now().toString(),
-            qrCode: `VPG-${Date.now()}`,
+            id: generateId(),
+            qrCode: `VPG-${generateId()}`,
         };
         setGuests(prev => [...prev, newGuest]);
         addAuditLog('guest_added', `Added guest: ${guest.name}`);
@@ -1274,7 +1876,7 @@ const App: React.FC = () => {
     const handleAddReservation = useCallback((reservation: Omit<Reservation, 'id' | 'createdAt'>) => {
         const newReservation: Reservation = {
             ...reservation,
-            id: Date.now().toString(),
+            id: generateId(),
             createdAt: new Date(),
         };
         setReservations(prev => [...prev, newReservation]);
@@ -1290,7 +1892,7 @@ const App: React.FC = () => {
     const handleAddToWaitlist = useCallback((entry: Omit<WaitlistEntry, 'id' | 'addedAt' | 'status'>) => {
         const newEntry: WaitlistEntry = {
             ...entry,
-            id: Date.now().toString(),
+            id: generateId(),
             addedAt: new Date(),
             status: 'waiting',
         };
@@ -1306,18 +1908,18 @@ const App: React.FC = () => {
         if (notificationSettings.browserPush && 'Notification' in window && Notification.permission === 'granted') {
             const entry = waitlist.find(w => w.id === id);
             if (entry) {
-                new Notification('Guest Ready', {
-                    body: `${entry.guestName} - Table is ready`,
+                new Notification(t('waitlistGuestReadyTitle'), {
+                    body: t('waitlistGuestReadyBody', { name: entry.guestName }),
                     icon: '/icon.png'
                 });
             }
         }
-    }, [addAuditLog, waitlist, notificationSettings.browserPush]);
+    }, [addAuditLog, waitlist, notificationSettings.browserPush, t]);
 
     // Financial Handlers
     const handleAddRevenue = useCallback((amount: number, guestCount: number, zoneId?: string, notes?: string) => {
         const newEntry: RevenueEntry = {
-            id: Date.now().toString(),
+            id: generateId(),
             timestamp: new Date(),
             amount,
             guestCount,
@@ -1345,7 +1947,7 @@ const App: React.FC = () => {
         const totalGuests = todayRevenue.reduce((sum, e) => sum + e.guestCount, 0);
 
         const closing: DailyClosing = {
-            id: Date.now().toString(),
+            id: generateId(),
             date: new Date(),
             totalRevenue,
             totalGuests,
@@ -1359,25 +1961,192 @@ const App: React.FC = () => {
     }, [currentUser, revenueEntries, addAuditLog]);
 
     // Security Handlers
-    const handleEnablePIN = useCallback((pin: string) => {
-        setSecurity(prev => ({ ...prev, pinEnabled: true, pin }));
+    const handleEnablePIN = useCallback(async (pin: string) => {
+        const hashedValue = await hashPin(pin);
+        setSecurity(prev => ({ ...prev, pinEnabled: true, pin: hashedValue }));
         addAuditLog('pin_enabled', 'PIN protection enabled');
     }, [addAuditLog]);
 
-    const handleVerifyPIN = useCallback((inputPin: string) => {
-        if (inputPin === security.pin) {
-            setIsPinLocked(false);
-            setPinInput('');
+    const handleVerifyPIN = useCallback(async (inputPin: string) => {
+        if (!security.pin) return false;
+        const isValid = await verifyPin(inputPin, security.pin);
+        if (isValid) {
             return true;
         }
         return false;
     }, [security.pin]);
 
+    const clearManagerAuthInputs = useCallback(() => {
+        setPinInput('');
+        setNewPinInput('');
+        setConfirmPinInput('');
+        setManagerProfileName('');
+        setManagerProfileEmail('');
+    }, []);
+
+    const openManagerAuth = useCallback(() => {
+        if (managerProfiles.length > 0 && !managerLoginUserId) {
+            setManagerLoginUserId(managerProfiles[0]?.id ?? '');
+        }
+        clearManagerAuthInputs();
+        setIsPinLocked(true);
+    }, [managerProfiles, managerLoginUserId, clearManagerAuthInputs]);
+
+    const handleCreateManagerProfile = useCallback(async () => {
+        const cleanName = sanitizeString(managerProfileName);
+        const cleanEmail = sanitizeString(managerProfileEmail).toLowerCase();
+        const pin = newPinInput.trim();
+        const confirmPin = confirmPinInput.trim();
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!cleanName || !emailRegex.test(cleanEmail)) {
+            setAlertModal({
+                title: t('managerAccessTitle'),
+                message: t('managerProfileInvalidError'),
+                variant: 'error',
+            });
+            return;
+        }
+        if (!/^\d{4,8}$/.test(pin)) {
+            setAlertModal({
+                title: t('managerAccessTitle'),
+                message: t('managerPinFormatError'),
+                variant: 'error',
+            });
+            return;
+        }
+        if (pin !== confirmPin) {
+            setAlertModal({
+                title: t('managerAccessTitle'),
+                message: t('managerPinMismatchError'),
+                variant: 'error',
+            });
+            return;
+        }
+        if (users.some(user => user.isActive && user.email.toLowerCase() === cleanEmail)) {
+            setAlertModal({
+                title: t('managerAccessTitle'),
+                message: t('managerProfileExistsError'),
+                variant: 'error',
+            });
+            return;
+        }
+
+        const newManager: User = {
+            id: generateId(),
+            name: cleanName,
+            email: cleanEmail,
+            role: 'manager',
+            isActive: true,
+            createdAt: new Date(),
+        };
+
+        await handleEnablePIN(pin);
+        setUsers(prev => [...prev, newManager]);
+        setManagerLoginUserId(newManager.id);
+        setCurrentUser(newManager);
+        setManagerSessionVerified(true);
+        setRoleView('manager');
+        setIsPinLocked(false);
+        clearManagerAuthInputs();
+        setAlertModal({
+            title: t('managerAccessTitle'),
+            message: t('managerProfileCreated'),
+            variant: 'success',
+        });
+    }, [
+        managerProfileName,
+        managerProfileEmail,
+        newPinInput,
+        confirmPinInput,
+        users,
+        handleEnablePIN,
+        clearManagerAuthInputs,
+        t,
+    ]);
+
+    const requestManagerAccess = useCallback((): boolean => {
+        if (canAccessManagerFeatures) return true;
+        openManagerAuth();
+        return false;
+    }, [canAccessManagerFeatures, openManagerAuth]);
+
+    const handleManagerPinSubmit = useCallback(async () => {
+        if (!hasManagerAccessConfigured) {
+            await handleCreateManagerProfile();
+            return;
+        }
+
+        const targetManager = managerProfiles.find(user => user.id === managerLoginUserId) ?? managerProfiles[0];
+        if (!targetManager) {
+            setAlertModal({
+                title: t('managerAccessTitle'),
+                message: t('managerProfileNotFound'),
+                variant: 'error',
+            });
+            return;
+        }
+
+        const enteredPin = pinInput.trim();
+        const pinOk = await handleVerifyPIN(enteredPin);
+        if (!pinOk) {
+            setAlertModal({
+                title: t('managerAccessTitle'),
+                message: t('managerPinInvalidError'),
+                variant: 'error',
+            });
+            return;
+        }
+
+        setCurrentUser(targetManager);
+        setManagerSessionVerified(true);
+        setRoleView('manager');
+        setIsPinLocked(false);
+        clearManagerAuthInputs();
+    }, [
+        hasManagerAccessConfigured,
+        managerProfiles,
+        managerLoginUserId,
+        pinInput,
+        handleCreateManagerProfile,
+        handleVerifyPIN,
+        clearManagerAuthInputs,
+        t,
+    ]);
+
+    const handleManagerPinCancel = useCallback(() => {
+        setIsPinLocked(false);
+        clearManagerAuthInputs();
+    }, [clearManagerAuthInputs]);
+
+    const handleManagerLogout = useCallback(() => {
+        setManagerSessionVerified(false);
+        setRoleView('door');
+        setCurrentUser(firstActiveStaffUser);
+        setIsPinLocked(false);
+        clearManagerAuthInputs();
+    }, [firstActiveStaffUser, clearManagerAuthInputs]);
+
+    const handleOpenSettings = useCallback(() => {
+        if (!requestManagerAccess()) return;
+        setIsSettingsOpen(true);
+    }, [requestManagerAccess]);
+
+    const handleOpenAnalytics = useCallback(() => {
+        if (!requestManagerAccess()) return;
+        setIsAnalyticsOpen(true);
+    }, [requestManagerAccess]);
+
+    const handleSwitchToManagerView = useCallback(() => {
+        if (!requestManagerAccess()) return;
+        setRoleView('manager');
+    }, [requestManagerAccess]);
+
     // Notification Handlers
     const handleAddNotification = useCallback((notification: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
         const newNotification: AppNotification = {
             ...notification,
-            id: Date.now().toString(),
+            id: generateId(),
             timestamp: new Date(),
             read: false,
         };
@@ -1433,7 +2202,7 @@ const App: React.FC = () => {
     // Hardware Handlers
     const handlePrintReport = useCallback(() => {
         if (!printerConnected) {
-            alert(t('hardwarePrinterDisconnected'));
+            setAlertModal({ title: t('hardwarePrinter'), message: t('hardwarePrinterDisconnected'), variant: 'error' });
             return;
         }
         window.print();
@@ -1441,11 +2210,125 @@ const App: React.FC = () => {
     }, [printerConnected, addAuditLog, t]);
 
     const handleGenerateAPIKey = useCallback(() => {
-        const newKey = 'vp_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        const newKey = generateApiKey();
         setApiKey(newKey);
         addAuditLog('api_key_generated', 'New API key generated');
         return newKey;
     }, [addAuditLog]);
+
+    const handleLogIncident = useCallback(() => {
+        const note = incidentDraft.note.trim();
+        if (!note) {
+            setAlertModal({ title: t('incidentNoteRequiredTitle'), message: t('incidentNoteRequiredMessage'), variant: 'error' });
+            return;
+        }
+
+        const incident: IncidentLogEntry = {
+            id: generateId(),
+            timestamp: new Date(),
+            zoneId: incidentDraft.zoneId || selectedZone,
+            severity: incidentDraft.severity,
+            category: incidentDraft.category,
+            note: sanitizeString(note),
+            reportedBy: currentUser?.name ?? t('unknownUser'),
+            resolved: false,
+        };
+
+        setIncidents(prev => [incident, ...prev].slice(0, 250));
+        setIncidentDraft(prev => ({ ...prev, note: '' }));
+        addAuditLog('incident_logged', `${t(incidentCategoryLabelKeys[incident.category])} (${incident.severity}) in zone ${incident.zoneId}`);
+        handleAddNotification({
+            type: incident.severity === 'high' ? 'error' : incident.severity === 'medium' ? 'warning' : 'info',
+            title: t('incidentNotificationTitle', { category: t(incidentCategoryLabelKeys[incident.category]) }),
+            message: incident.note,
+        });
+    }, [incidentDraft, selectedZone, currentUser?.name, addAuditLog, handleAddNotification, t]);
+
+    const handleResolveIncident = useCallback((incidentId: string) => {
+        setIncidents(prev => prev.map(incident =>
+            incident.id === incidentId ? { ...incident, resolved: true } : incident
+        ));
+        addAuditLog('incident_resolved', `Resolved incident ${incidentId}`);
+    }, [addAuditLog]);
+
+    const handleGenerateHandoverReport = useCallback(() => {
+        const periodEnd = new Date();
+        const periodStart = currentShift?.startTime ? new Date(currentShift.startTime) : new Date(periodEnd.getFullYear(), periodEnd.getMonth(), periodEnd.getDate());
+        const periodLog = log
+            .filter(entry => entry.timestamp >= periodStart && entry.timestamp <= periodEnd)
+            .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+        const netPeriodFlow = periodLog.reduce((sum, entry) => sum + (entry.action === 'in' ? 1 : -1), 0);
+        let runningCount = Math.max(0, totalGuests - netPeriodFlow);
+        let peakGuests = runningCount;
+        let peakTime: Date | null = null;
+        const entriesByHour: Record<number, number> = {};
+
+        periodLog.forEach(entry => {
+            if (entry.action === 'in') {
+                runningCount += 1;
+                entriesByHour[entry.timestamp.getHours()] = (entriesByHour[entry.timestamp.getHours()] ?? 0) + 1;
+            } else {
+                runningCount = Math.max(0, runningCount - 1);
+            }
+            if (runningCount > peakGuests) {
+                peakGuests = runningCount;
+                peakTime = entry.timestamp;
+            }
+        });
+
+        const busiestHour = Object.entries(entriesByHour).sort((a, b) => b[1] - a[1])[0];
+        const busiestHourNumber = busiestHour ? Number.parseInt(busiestHour[0], 10) : periodStart.getHours();
+        const busiestHourLabel = `${String(busiestHourNumber).padStart(2, '0')}:00-${String((busiestHourNumber + 1) % 24).padStart(2, '0')}:00`;
+        const periodIncidents = incidents.filter(incident => incident.timestamp >= periodStart && incident.timestamp <= periodEnd);
+        const unresolvedIncidents = periodIncidents.filter(incident => !incident.resolved).length;
+        const totalEntries = periodLog.filter(entry => entry.action === 'in').length;
+        const resolvedPeakTime = peakTime as Date | null;
+        const peakTimeText = resolvedPeakTime
+            ? t('handoverPeakTimeSuffix', { time: resolvedPeakTime.toLocaleTimeString(currentLocale, { hour: '2-digit', minute: '2-digit' }) })
+            : '';
+        const summary = [
+            t('handoverSummaryWindow', { start: periodStart.toLocaleString(currentLocale), end: periodEnd.toLocaleString(currentLocale) }),
+            t('handoverSummaryPeak', { peakGuests: String(peakGuests), peakTimeText }),
+            t('handoverSummaryTotalCheckins', { totalEntries: String(totalEntries) }),
+            t('handoverSummaryBusiestHour', { busiestHourLabel }),
+            t('handoverSummaryIncidents', { total: String(periodIncidents.length), unresolved: String(unresolvedIncidents) }),
+            t('handoverSummaryCurrentOccupancy', { totalGuests: String(totalGuests), maxCapacity: String(maxCapacity) }),
+        ].join('\n');
+
+        const report: HandoverReport = {
+            id: generateId(),
+            generatedAt: periodEnd,
+            periodStart,
+            periodEnd,
+            peakGuests,
+            peakTime: resolvedPeakTime,
+            totalEntries,
+            incidentsCount: periodIncidents.length,
+            unresolvedIncidentsCount: unresolvedIncidents,
+            busiestHourLabel,
+            summary,
+        };
+
+        setHandoverReports(prev => [report, ...prev].slice(0, 50));
+        setActiveReportId(report.id);
+        addAuditLog('handover_report_generated', `Generated handover report (${totalEntries} entries)`);
+        handleAddNotification({
+            type: 'success',
+            title: t('handoverReadyTitle'),
+            message: t('handoverReadyMessage', { peakGuests: String(report.peakGuests), unresolvedIncidents: String(report.unresolvedIncidentsCount) }),
+        });
+    }, [currentShift?.startTime, log, totalGuests, incidents, currentLocale, maxCapacity, addAuditLog, handleAddNotification, t]);
+
+    const handleCopyHandoverReport = useCallback(async () => {
+        if (!activeHandoverReport) return;
+        try {
+            await navigator.clipboard.writeText(activeHandoverReport.summary);
+            setRestoreMessage({ type: 'success', text: t('handoverCopied') });
+        } catch {
+            setRestoreMessage({ type: 'error', text: t('clipboardAccessFailed') });
+        }
+    }, [activeHandoverReport, t]);
 
     // ========= END NEW HANDLERS ========= //
 
@@ -1487,6 +2370,11 @@ const App: React.FC = () => {
     const targetRect = tutorialTarget?.getBoundingClientRect();
 
     const csvHeaders = [t('historyTableDate'), t('historyTablePeak'), t('historyTableTotalEntries'), t('historyTableTotalGuests'), t('historyTableEnd')];
+    const getIncidentSeverityLabel = useCallback((severity: IncidentSeverity) => {
+        if (severity === 'low') return t('incidentSeverityLow');
+        if (severity === 'medium') return t('incidentSeverityMedium');
+        return t('incidentSeverityHigh');
+    }, [t]);
 
     // ========= RENDER-METHODE ========= //
 
@@ -1498,6 +2386,11 @@ const App: React.FC = () => {
                   --accent-500: ${colorPalettes[settings.customization.accentColor]?.[500]};
                   --accent-600: ${colorPalettes[settings.customization.accentColor]?.[600]};
                   --accent-700: ${colorPalettes[settings.customization.accentColor]?.[700]};
+                  --state-safe: #22c55e;
+                  --state-watch: #f59e0b;
+                  --state-critical: #ef4444;
+                  --state-full: #b91c1c;
+                  --state-current: ${appLoadState === 'safe' ? 'var(--state-safe)' : appLoadState === 'watch' ? 'var(--state-watch)' : appLoadState === 'critical' ? 'var(--state-critical)' : 'var(--state-full)'};
                 }
             `}</style>
             
@@ -1526,22 +2419,75 @@ const App: React.FC = () => {
                      <div className="flex items-center space-x-4 group cursor-pointer">
                         <a href="/" aria-label="Reload" className="relative transition-transform group-hover:scale-110 duration-300">
                              <div className="absolute inset-0 bg-blue-500/30 blur-xl rounded-full"></div>
-                             <div className="relative w-12 h-12 text-slate-800 dark:text-white drop-shadow-lg" dangerouslySetInnerHTML={{ __html: defaultLogoSvg }}></div>
+                             <LogoIcon className="relative w-12 h-12 text-slate-800 dark:text-white drop-shadow-lg" />
                         </a>
                          <div>
                             <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-600 dark:from-white dark:to-slate-300 tracking-tight">{t('appTitle')}</h1>
                             <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-widest">{t('appSubtitle')}</p>
                         </div>
-                     </div>
+                    </div>
 
                     <div className="flex items-center gap-2 sm:gap-4">
+                        <div className="hidden sm:flex items-center gap-2 glass-panel px-3 py-2 rounded-xl border border-white/40 dark:border-white/10">
+                            <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400">{t('profileLabel')}</span>
+                            {canAccessManagerFeatures && currentUser ? (
+                                <>
+                                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                                        {currentUser.name}
+                                    </span>
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                                        {t('profileStatusManagerUnlocked')}
+                                    </span>
+                                    <button
+                                        onClick={handleManagerLogout}
+                                        className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 transition-colors"
+                                    >
+                                        {t('securityLogout')}
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-300/60 text-slate-700 dark:bg-slate-700/60 dark:text-slate-300">
+                                        {t('profileStatusWorker')}
+                                    </span>
+                                    <button
+                                        onClick={openManagerAuth}
+                                        className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-900 text-white dark:bg-white dark:text-slate-900 transition-colors"
+                                    >
+                                        {t('managerLoginTab')}
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                         <div className="hidden md:flex items-center bg-white/70 dark:bg-black/30 rounded-full p-1 border border-white/50 dark:border-white/10 shadow-sm">
+                             {canAccessManagerFeatures ? (
+                                 <>
+                                     <button
+                                         onClick={handleSwitchToManagerView}
+                                         className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${roleView === 'manager' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-600 dark:text-slate-300'}`}
+                                     >
+                                         {t('managerView')}
+                                     </button>
+                                     <button
+                                         onClick={() => setRoleView('door')}
+                                         className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${roleView === 'door' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-600 dark:text-slate-300'}`}
+                                     >
+                                         {t('doorView')}
+                                     </button>
+                                 </>
+                             ) : (
+                                 <span className="px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+                                     {t('doorView')}
+                                 </span>
+                             )}
+                         </div>
                          {/* Premium Badge */}
                          {isPremium && (
                              <div className="hidden sm:flex items-center gap-2 glass-panel px-3 py-1.5 rounded-full border border-yellow-400/50 bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20">
                                  <svg className="w-4 h-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
                                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                                  </svg>
-                                 <span className="text-xs font-bold text-yellow-700 dark:text-yellow-300">Premium</span>
+                                 <span className="text-xs font-bold text-yellow-700 dark:text-yellow-300">{t('subscriptionPremium')}</span>
                              </div>
                          )}
                          {!isPremium && (
@@ -1549,12 +2495,12 @@ const App: React.FC = () => {
                                  <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="currentColor" viewBox="0 0 20 20">
                                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                                  </svg>
-                                 <span className="text-xs font-bold text-blue-700 dark:text-blue-300">Premium</span>
+                                 <span className="text-xs font-bold text-blue-700 dark:text-blue-300">{t('subscriptionPremium')}</span>
                              </button>
                          )}
 
                          {/* Undo/Redo Buttons - Premium only */}
-                         {isPremium && (
+                         {isPremium && canAccessManagerFeatures && (
                          <div className="flex items-center gap-2">
                              <button
                                  onClick={handleUndo}
@@ -1580,22 +2526,26 @@ const App: React.FC = () => {
                              </button>
                          </div>
                          )}
-                         <button onClick={() => { setIsAnalyticsOpen(true); playSound(uiClickSound, settings.tones, 'ui'); }} className="w-12 h-12 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-blue-600 dark:text-slate-300 dark:hover:text-blue-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10" aria-label={t('analyticsTitle')} title={t('shortcutAnalytics')}>
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                            </svg>
-                         </button>
-                        <button id="settings-button" onClick={() => { setIsSettingsOpen(true); playSound(uiClickSound, settings.tones, 'ui'); }} className="w-12 h-12 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-purple-600 dark:text-slate-300 dark:hover:text-purple-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10" aria-label={t('settingsTitle')} aria-haspopup="true" aria-expanded={isSettingsOpen} title={t('shortcutSettings')}>
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                        </button>
+                         {canAccessManagerFeatures && (
+                             <>
+                                 <button onClick={handleOpenAnalytics} className="w-12 h-12 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-blue-600 dark:text-slate-300 dark:hover:text-blue-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10" aria-label={t('analyticsTitle')} title={t('shortcutAnalytics')}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                    </svg>
+                                 </button>
+                                <button id="settings-button" onClick={handleOpenSettings} className="w-12 h-12 flex items-center justify-center glass-panel rounded-full text-slate-600 hover:text-purple-600 dark:text-slate-300 dark:hover:text-purple-400 transition-all duration-300 hover:scale-110 shadow-lg border border-white/40 dark:border-white/10" aria-label={t('settingsTitle')} aria-haspopup="true" aria-expanded={isSettingsOpen} title={t('shortcutSettings')}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    </svg>
+                                </button>
+                             </>
+                        )}
                     </div>
                 </header>
 
                 {/* Feature Navigation Bar - Premium Features */}
-                {isPremium && (
+                {isPremium && roleView === 'manager' && (
                     <div className="max-w-7xl mx-auto mb-8 px-2">
                         <div className="glass-panel rounded-2xl p-4 shadow-xl border border-white/40 dark:border-white/10">
                             <div className="flex items-center gap-3 overflow-x-auto pb-2">
@@ -1679,12 +2629,17 @@ const App: React.FC = () => {
                     </div>
                 )}
 
-                <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    {/* Left Column - Main Stats */}
-                    <div className="lg:col-span-8 space-y-8">
-                        <div id="total-guests-card" className="glass-panel rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden border-white/60 dark:border-white/10">
-                            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-400 via-pink-500 to-purple-500 opacity-50"></div>
-                            <GenderDistributionChart 
+                <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <div className={`${roleView === 'manager' ? 'lg:col-span-5' : 'lg:col-span-8'} space-y-6`}>
+                        <div id="total-guests-card" className={`glass-panel rounded-[2.3rem] p-6 shadow-2xl relative overflow-hidden border ${loadStateMeta[appLoadState].borderClass}`}>
+                            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[var(--state-current)] via-[var(--accent-500)] to-[var(--accent-700)] opacity-70"></div>
+                            <div className="flex justify-between items-center mb-3">
+                                <p className="text-xs uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400 font-semibold">{t('operationsCockpitTitle')}</p>
+                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${loadStateMeta[appLoadState].chipClass}`}>
+                                    {t(loadStateMeta[appLoadState].labelKey)}
+                                </span>
+                            </div>
+                            <GenderDistributionChart
                                 counts={counts}
                                 totalGuests={totalGuests}
                                 showOther={settings.customization.showOther}
@@ -1692,59 +2647,207 @@ const App: React.FC = () => {
                             />
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 counter-grid">
-                            <CounterCard 
-                                title={counterCardGenderMap[Gender.Male]} 
-                                count={counts[Gender.Male]} 
-                                onIn={() => handleIn(Gender.Male)} 
-                                onOut={() => handleOut(Gender.Male)} 
-                                colorClass="text-blue-500 dark:text-blue-400" 
-                                inDisabled={capacityReached} 
+                        <div className={`grid ${settings.customization.showOther ? 'grid-cols-1 xl:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'} gap-4 counter-grid`}>
+                            <CounterCard
+                                title={counterCardGenderMap[Gender.Male]}
+                                count={counts[Gender.Male]}
+                                onIn={() => handleIn(Gender.Male)}
+                                onOut={() => handleOut(Gender.Male)}
+                                colorClass="text-blue-500 dark:text-blue-400"
+                                inDisabled={capacityReached}
                                 t={t}
                                 gradientFrom="bg-blue-500"
                                 gradientTo="bg-cyan-400"
                             />
-                            <CounterCard 
-                                title={counterCardGenderMap[Gender.Female]} 
-                                count={counts[Gender.Female]} 
-                                onIn={() => handleIn(Gender.Female)} 
-                                onOut={() => handleOut(Gender.Female)} 
-                                colorClass="text-pink-500 dark:text-pink-400" 
-                                inDisabled={capacityReached} 
+                            <CounterCard
+                                title={counterCardGenderMap[Gender.Female]}
+                                count={counts[Gender.Female]}
+                                onIn={() => handleIn(Gender.Female)}
+                                onOut={() => handleOut(Gender.Female)}
+                                colorClass="text-pink-500 dark:text-pink-400"
+                                inDisabled={capacityReached}
                                 t={t}
                                 gradientFrom="bg-pink-500"
                                 gradientTo="bg-rose-400"
                             />
                             {settings.customization.showOther && (
-                                <CounterCard 
-                                    title={counterCardGenderMap[Gender.Other]} 
-                                    count={counts[Gender.Other]} 
-                                    onIn={() => handleIn(Gender.Other)} 
-                                    onOut={() => handleOut(Gender.Other)} 
-                                    colorClass="text-purple-500 dark:text-purple-400" 
-                                    inDisabled={capacityReached} 
+                                <CounterCard
+                                    title={counterCardGenderMap[Gender.Other]}
+                                    count={counts[Gender.Other]}
+                                    onIn={() => handleIn(Gender.Other)}
+                                    onOut={() => handleOut(Gender.Other)}
+                                    colorClass="text-purple-500 dark:text-purple-400"
+                                    inDisabled={capacityReached}
                                     t={t}
                                     gradientFrom="bg-purple-500"
                                     gradientTo="bg-indigo-400"
                                 />
                             )}
                         </div>
+
+                        {roleView === 'door' && (
+                            <div className="glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10">
+                                <div className="flex items-center justify-between gap-3 mb-4">
+                                    <h3 className="text-sm uppercase tracking-[0.15em] font-semibold text-slate-500 dark:text-slate-400">{t('quickActionsTitle')}</h3>
+                                    <div className="flex items-center bg-slate-200/60 dark:bg-slate-700/60 rounded-full p-1 text-xs font-semibold">
+                                        {[Gender.Male, Gender.Female, Gender.Other].map(gender => (
+                                            <button
+                                                key={gender}
+                                                onClick={() => setQuickActionGender(gender)}
+                                                className={`px-2.5 py-1 rounded-full transition-all ${quickActionGender === gender ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow' : 'text-slate-600 dark:text-slate-300'}`}
+                                            >
+                                                {gender === Gender.Male ? 'M' : gender === Gender.Female ? 'F' : 'O'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                    <button onClick={() => handleIn(quickActionGender)} disabled={capacityReached} className="rounded-xl px-4 py-3 font-semibold bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-400 text-white transition-colors">{t('quickActionGuestIn')}</button>
+                                    <button onClick={() => handleOut(quickActionGender)} className="rounded-xl px-4 py-3 font-semibold bg-rose-500 hover:bg-rose-600 text-white transition-colors">{t('quickActionGuestOut')}</button>
+                                    <button onClick={handleGenerateHandoverReport} className="rounded-xl px-4 py-3 font-semibold bg-indigo-500 hover:bg-indigo-600 text-white transition-colors">{t('quickActionHandover')}</button>
+                                    <button onClick={handleSwitchToManagerView} className="rounded-xl px-4 py-3 font-semibold bg-slate-800 hover:bg-slate-900 text-white transition-colors">
+                                        {canAccessManagerFeatures ? t('managerShort') : t('managerLoginTab')}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
-                    {/* Right Column - Info & Log */}
-                    <div className="lg:col-span-4 space-y-8">
-                        <div id="capacity-bar" className="glass-panel rounded-[2rem] p-6 shadow-xl border-white/60 dark:border-white/10">
-                          <CapacityBar currentCount={totalGuests} maxCapacity={maxCapacity} t={t} />
+                    {roleView === 'manager' && (
+                        <div className="lg:col-span-3 space-y-6">
+                            <div id="capacity-bar" className={`glass-panel rounded-[2rem] p-6 shadow-xl border ${loadStateMeta[appLoadState].borderClass}`}>
+                                <CapacityBar currentCount={totalGuests} maxCapacity={maxCapacity} t={t} />
+                            </div>
+
+                            <div className="glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm uppercase tracking-[0.15em] font-semibold text-slate-500 dark:text-slate-400">{t('capacityForecastTitle')}</h3>
+                                    <span className={`text-xs px-2 py-1 rounded-full font-semibold ${
+                                        capacityForecast.trend === 'rising'
+                                            ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300'
+                                            : capacityForecast.trend === 'falling'
+                                                ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                                                : 'bg-slate-300/60 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300'
+                                    }`}>
+                                        {capacityForecast.trend === 'rising'
+                                            ? t('forecastTrendRising')
+                                            : capacityForecast.trend === 'falling'
+                                                ? t('forecastTrendFalling')
+                                                : t('forecastTrendStable')}
+                                    </span>
+                                </div>
+                                <p className="text-3xl font-bold text-slate-800 dark:text-white mb-2">
+                                    {capacityForecast.etaMinutes === null
+                                        ? t('capacityForecastNoEta')
+                                        : capacityForecast.etaMinutes === 0
+                                            ? t('capacityForecastAtCapacity')
+                                            : t('capacityForecastEtaMinutes', { minutes: String(capacityForecast.etaMinutes) })}
+                                </p>
+                                <p className="text-sm text-slate-600 dark:text-slate-300">
+                                    {t('capacityForecastSummary', {
+                                        windowMinutes: String(capacityForecast.windowMinutes),
+                                        ins: String(capacityForecast.ins),
+                                        outs: String(capacityForecast.outs),
+                                    })}
+                                </p>
+                            </div>
+
+                            <div className="glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-sm uppercase tracking-[0.15em] font-semibold text-slate-500 dark:text-slate-400">{t('zoneHealthTitle')}</h3>
+                                    <select
+                                        value={selectedZone}
+                                        onChange={(e) => setSelectedZone(e.target.value)}
+                                        className="text-xs rounded-lg bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-2 py-1 text-slate-800 dark:text-slate-100 dark:[color-scheme:dark]"
+                                    >
+                                        {zones.map(zone => (
+                                            <option key={zone.id} value={zone.id}>{zone.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
+                                    {zones.map(zone => {
+                                        const percentage = zone.maxCapacity > 0 ? (zone.currentCount / zone.maxCapacity) * 100 : 0;
+                                        const state = getLoadState(percentage);
+                                        return (
+                                            <div key={zone.id} className={`rounded-xl p-3 border ${
+                                                state === 'safe' ? 'border-emerald-400/30 bg-emerald-500/5' :
+                                                state === 'watch' ? 'border-amber-400/30 bg-amber-500/5' :
+                                                state === 'critical' ? 'border-rose-400/30 bg-rose-500/5' :
+                                                'border-red-500/40 bg-red-500/10'
+                                            }`}>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <button
+                                                        onClick={() => setSelectedZone(zone.id)}
+                                                        className={`font-semibold text-sm ${selectedZone === zone.id ? 'text-slate-900 dark:text-white underline underline-offset-4' : 'text-slate-700 dark:text-slate-200'}`}
+                                                    >
+                                                        {zone.name}
+                                                    </button>
+                                                    <span className={`text-[10px] font-bold uppercase tracking-wider ${loadStateMeta[state].textClass}`}>
+                                                        {t(loadStateMeta[state].labelKey)}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-300 mb-2">
+                                                    <span>{zone.currentCount}/{zone.maxCapacity}</span>
+                                                    <span>{percentage.toFixed(0)}%</span>
+                                                </div>
+                                                <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden mb-2">
+                                                    <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, percentage)}%`, backgroundColor: state === 'safe' ? 'var(--state-safe)' : state === 'watch' ? 'var(--state-watch)' : state === 'critical' ? 'var(--state-critical)' : 'var(--state-full)' }} />
+                                                </div>
+                                                {zone.id !== 'main' && (
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => handleUpdateZone(zone.id, { currentCount: Math.max(0, zone.currentCount - 1) })} className="flex-1 rounded-lg py-1 text-xs font-semibold bg-slate-200 dark:bg-slate-700">-1</button>
+                                                        <button onClick={() => handleUpdateZone(zone.id, { currentCount: Math.min(zone.maxCapacity, zone.currentCount + 1) })} className="flex-1 rounded-lg py-1 text-xs font-semibold bg-slate-900 text-white dark:bg-white dark:text-slate-900">+1</button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
                         </div>
-                        
-                        <div id="activity-log" className="glass-panel rounded-[2rem] p-6 shadow-xl h-[500px] flex flex-col relative overflow-hidden border-white/60 dark:border-white/10">
+                    )}
+
+                    <div className={`${roleView === 'manager' ? 'lg:col-span-4' : 'lg:col-span-4'} space-y-6`}>
+                        <div className="glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10">
+                            <div className="flex items-center justify-between gap-3 mb-4">
+                                <h3 className="text-sm uppercase tracking-[0.15em] font-semibold text-slate-500 dark:text-slate-400">{t('quickActionsTitle')}</h3>
+                                <div className="md:hidden flex items-center bg-slate-200/60 dark:bg-slate-700/60 rounded-full p-1 text-xs font-semibold">
+                                    {canAccessManagerFeatures && (
+                                        <button onClick={handleSwitchToManagerView} className={`px-2.5 py-1 rounded-full ${roleView === 'manager' ? 'bg-white dark:bg-slate-900 shadow' : ''}`}>{t('managerShort')}</button>
+                                    )}
+                                    <button onClick={() => setRoleView('door')} className={`px-2.5 py-1 rounded-full ${roleView === 'door' ? 'bg-white dark:bg-slate-900 shadow' : ''}`}>{t('doorShort')}</button>
+                                    {!canAccessManagerFeatures && (
+                                        <button onClick={openManagerAuth} className="px-2.5 py-1 rounded-full">{t('managerLoginTab')}</button>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex items-center bg-slate-200/60 dark:bg-slate-700/60 rounded-full p-1 text-xs font-semibold mb-3 w-fit">
+                                {[Gender.Male, Gender.Female, Gender.Other].map(gender => (
+                                    <button
+                                        key={gender}
+                                        onClick={() => setQuickActionGender(gender)}
+                                        className={`px-2.5 py-1 rounded-full transition-all ${quickActionGender === gender ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow' : 'text-slate-600 dark:text-slate-300'}`}
+                                    >
+                                        {gender === Gender.Male ? 'M' : gender === Gender.Female ? 'F' : 'O'}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <button onClick={() => handleIn(quickActionGender)} disabled={capacityReached} className="rounded-xl px-4 py-3 font-semibold bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-400 text-white transition-colors">{t('quickActionGuestIn')}</button>
+                                <button onClick={() => handleOut(quickActionGender)} className="rounded-xl px-4 py-3 font-semibold bg-rose-500 hover:bg-rose-600 text-white transition-colors">{t('quickActionGuestOut')}</button>
+                                <button onClick={handleGenerateHandoverReport} className="rounded-xl px-4 py-3 font-semibold bg-indigo-500 hover:bg-indigo-600 text-white transition-colors">{t('quickActionHandover')}</button>
+                                <button onClick={() => setIsNotificationModalOpen(true)} className="rounded-xl px-4 py-3 font-semibold bg-amber-500 hover:bg-amber-600 text-white transition-colors">{t('quickActionAlerts')}</button>
+                            </div>
+                        </div>
+
+                        <div id="activity-log" className="glass-panel rounded-[2rem] p-6 shadow-xl h-[370px] flex flex-col relative overflow-hidden border border-white/60 dark:border-white/10">
                             <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-24 w-24" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
                             </div>
                             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                                 {t('activityLogTitle')}
                             </h3>
-                            {/* Search Input */}
                             <div className="mb-4">
                                 <input
                                     type="text"
@@ -1755,7 +2858,7 @@ const App: React.FC = () => {
                                 />
                             </div>
                             <div className="overflow-y-auto pr-2 flex-1 space-y-3 mask-image-linear-gradient-to-b scroll-smooth">
-                                {filteredLog.length > 0 ? filteredLog.map(entry => (
+                                {filteredLog.length > 0 ? filteredLog.slice(0, 30).map(entry => (
                                     <div key={entry.id} className="p-3 rounded-xl bg-white/60 dark:bg-black/20 hover:bg-white/80 dark:hover:bg-white/10 transition-colors group border border-white/40 dark:border-transparent">
                                         <div className="flex justify-between items-start mb-2">
                                             <span className="font-mono text-xs text-slate-500 dark:text-slate-400 opacity-70 group-hover:opacity-100 transition-opacity">
@@ -1802,7 +2905,7 @@ const App: React.FC = () => {
                                     </div>
                                 )) : sortedLog.length > 0 ? (
                                     <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
-                                        <p className="text-sm">No results found</p>
+                                        <p className="text-sm">{t('noResultsFound')}</p>
                                     </div>
                                 ) : (
                                     <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-2">
@@ -1813,6 +2916,103 @@ const App: React.FC = () => {
                                     </div>
                                 )}
                             </div>
+                        </div>
+
+                        <div className="glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10">
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className="text-sm uppercase tracking-[0.15em] font-semibold text-slate-500 dark:text-slate-400">{t('incidentTimelineTitle')}</h3>
+                                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('incidentOpenCount', { count: String(incidents.filter(incident => !incident.resolved).length) })}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 mb-2">
+                                <select
+                                    value={incidentDraft.category}
+                                    onChange={(e) => setIncidentDraft(prev => ({ ...prev, category: e.target.value as IncidentCategory }))}
+                                    className="rounded-lg bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-2 py-2 text-xs text-slate-800 dark:text-slate-100 dark:[color-scheme:dark]"
+                                >
+                                    {Object.entries(incidentCategoryLabelKeys).map(([value, labelKey]) => (
+                                        <option key={value} value={value}>{t(labelKey)}</option>
+                                    ))}
+                                </select>
+                                <select
+                                    value={incidentDraft.severity}
+                                    onChange={(e) => setIncidentDraft(prev => ({ ...prev, severity: e.target.value as IncidentSeverity }))}
+                                    className="rounded-lg bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-2 py-2 text-xs text-slate-800 dark:text-slate-100 dark:[color-scheme:dark]"
+                                >
+                                    <option value="low">{t('incidentSeverityLow')}</option>
+                                    <option value="medium">{t('incidentSeverityMedium')}</option>
+                                    <option value="high">{t('incidentSeverityHigh')}</option>
+                                </select>
+                            </div>
+                            <div className="grid grid-cols-[1fr_auto] gap-2 mb-4">
+                                <input
+                                    value={incidentDraft.note}
+                                    onChange={(e) => setIncidentDraft(prev => ({ ...prev, note: e.target.value }))}
+                                    placeholder={t('incidentLogPlaceholder')}
+                                    className="rounded-lg bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500"
+                                />
+                                <button onClick={handleLogIncident} className="rounded-lg px-4 py-2 text-sm font-semibold bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+                                    {t('incidentAddButton')}
+                                </button>
+                            </div>
+                            <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                                {incidents.slice(0, 8).map(incident => (
+                                    <div key={incident.id} className={`rounded-xl p-3 border ${
+                                        incident.resolved
+                                            ? 'border-slate-300/40 bg-slate-200/30 dark:border-slate-700 dark:bg-slate-800/40'
+                                            : incident.severity === 'high'
+                                                ? 'border-red-500/40 bg-red-500/10'
+                                                : incident.severity === 'medium'
+                                                    ? 'border-amber-400/40 bg-amber-500/10'
+                                                    : 'border-blue-400/40 bg-blue-500/10'
+                                    }`}>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <p className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                                                {t(incidentCategoryLabelKeys[incident.category])} · {getIncidentSeverityLabel(incident.severity)}
+                                            </p>
+                                            <span className="text-[10px] text-slate-500 dark:text-slate-400">{formatTime(incident.timestamp, settings.advanced.timeFormat, currentLocale)}</span>
+                                        </div>
+                                        <p className="text-sm text-slate-800 dark:text-slate-100 mb-2">{incident.note}</p>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] text-slate-500 dark:text-slate-400">{incident.reportedBy}</span>
+                                            {!incident.resolved ? (
+                                                <button onClick={() => handleResolveIncident(incident.id)} className="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                                                    {t('incidentMarkResolved')}
+                                                </button>
+                                            ) : (
+                                                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-300">{t('incidentResolved')}</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                                {incidents.length === 0 && (
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">{t('noIncidentsLogged')}</p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="glass-panel rounded-[2rem] p-5 shadow-xl border border-white/60 dark:border-white/10">
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className="text-sm uppercase tracking-[0.15em] font-semibold text-slate-500 dark:text-slate-400">{t('shiftHandoverTitle')}</h3>
+                                <button onClick={handleGenerateHandoverReport} className="text-xs font-semibold px-3 py-1.5 rounded-full bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">
+                                    {t('shiftHandoverGenerate')}
+                                </button>
+                            </div>
+                            {activeHandoverReport ? (
+                                <>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+                                        {activeHandoverReport.generatedAt.toLocaleString(currentLocale)}
+                                    </p>
+                                    <pre className="whitespace-pre-wrap text-xs leading-5 text-slate-700 dark:text-slate-200 bg-white/60 dark:bg-black/20 rounded-xl p-3 border border-white/30 dark:border-white/10 max-h-[160px] overflow-y-auto">
+{activeHandoverReport.summary}
+                                    </pre>
+                                    <div className="flex gap-2 mt-3">
+                                        <button onClick={handleCopyHandoverReport} className="flex-1 rounded-lg py-2 text-xs font-semibold bg-slate-900 text-white dark:bg-white dark:text-slate-900">{t('shiftHandoverCopy')}</button>
+                                        <button onClick={() => setIsHistoryOpen(true)} className="flex-1 rounded-lg py-2 text-xs font-semibold bg-slate-200 dark:bg-slate-700">{t('shiftHandoverViewHistory')}</button>
+                                    </div>
+                                </>
+                            ) : (
+                                <p className="text-sm text-slate-500 dark:text-slate-400">{t('shiftHandoverEmpty')}</p>
+                            )}
                         </div>
                     </div>
                 </main>
@@ -1852,7 +3052,172 @@ const App: React.FC = () => {
                         {t('capacityReachedAlert')}
                     </div>
                 )}
+
+                {smartAlertMessage && (
+                    <div className="fixed top-24 left-1/2 transform -translate-x-1/2 glass-panel bg-orange-500/90 dark:bg-orange-600/90 border-orange-400 text-white font-bold px-6 py-3 rounded-full shadow-2xl z-[100] flex items-center gap-3 backdrop-blur-xl animate-in fade-in slide-in-from-top-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" /></svg>
+                        {smartAlertMessage}
+                    </div>
+                )}
+
+                <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 lg:hidden w-[calc(100%-1.5rem)] max-w-md glass-panel rounded-2xl p-3 border border-white/60 dark:border-white/10 shadow-2xl">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center bg-slate-200/60 dark:bg-slate-700/60 rounded-full p-1 text-xs font-semibold">
+                            {[Gender.Male, Gender.Female, Gender.Other].map(gender => (
+                                <button
+                                    key={gender}
+                                    onClick={() => setQuickActionGender(gender)}
+                                    className={`px-2 py-1 rounded-full transition-all ${quickActionGender === gender ? 'bg-white dark:bg-slate-900 shadow text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300'}`}
+                                >
+                                    {gender === Gender.Male ? 'M' : gender === Gender.Female ? 'F' : 'O'}
+                                </button>
+                            ))}
+                        </div>
+                        {canAccessManagerFeatures ? (
+                            <button
+                                onClick={() => {
+                                    if (roleView === 'manager') {
+                                        setRoleView('door');
+                                    } else {
+                                        handleSwitchToManagerView();
+                                    }
+                                }}
+                                className="text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                            >
+                                {roleView === 'manager' ? t('doorView') : t('managerView')}
+                            </button>
+                        ) : (
+                            <button
+                                onClick={openManagerAuth}
+                                className="text-xs font-semibold px-3 py-1.5 rounded-full bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                            >
+                                {t('managerLoginTab')}
+                            </button>
+                        )}
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                        <button onClick={() => handleIn(quickActionGender)} disabled={capacityReached} className="rounded-lg py-2 text-xs font-semibold bg-emerald-500 disabled:bg-slate-400 text-white">{t('buttonIn')}</button>
+                        <button onClick={() => handleOut(quickActionGender)} className="rounded-lg py-2 text-xs font-semibold bg-rose-500 text-white">{t('buttonOut')}</button>
+                        <button onClick={handleGenerateHandoverReport} className="rounded-lg py-2 text-xs font-semibold bg-indigo-500 text-white">{t('quickActionReport')}</button>
+                        <button onClick={() => setIsNotificationModalOpen(true)} className="rounded-lg py-2 text-xs font-semibold bg-amber-500 text-white">{t('quickActionAlerts')}</button>
+                    </div>
+                </div>
             </div>
+
+            {isPinLocked && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+                    <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-xl" onClick={handleManagerPinCancel}></div>
+                    <div className="relative w-full max-w-md glass-panel rounded-[2rem] shadow-2xl border border-white/60 dark:border-white/10 p-6 sm:p-8 animate-in zoom-in-95 duration-300">
+                        <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">{t('managerAccessTitle')}</h2>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">
+                            {hasManagerAccessConfigured ? t('managerAccessEnterPin') : t('managerAccessCreateProfile')}
+                        </p>
+
+                        {hasManagerAccessConfigured ? (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                                        {t('managerProfileSelectLabel')}
+                                    </label>
+                                    <select
+                                        value={managerLoginUserId}
+                                        onChange={(event) => setManagerLoginUserId(event.target.value)}
+                                        className="w-full rounded-xl bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-4 py-3 text-slate-800 dark:text-slate-100 dark:[color-scheme:dark] text-sm"
+                                    >
+                                        {managerProfiles.map(user => (
+                                            <option key={user.id} value={user.id}>
+                                                {user.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                                        {t('managerAccessPinLabel')}
+                                    </label>
+                                    <input
+                                        type="password"
+                                        inputMode="numeric"
+                                        value={pinInput}
+                                        onChange={(event) => setPinInput(event.target.value)}
+                                        placeholder="****"
+                                        className="w-full rounded-xl bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-4 py-3 text-slate-800 dark:text-white text-lg tracking-[0.25em]"
+                                    />
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button onClick={handleManagerPinCancel} className="rounded-xl px-4 py-3 font-semibold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
+                                        {t('managerAccessCancel')}
+                                    </button>
+                                    <button onClick={handleManagerPinSubmit} className="rounded-xl px-4 py-3 font-semibold bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+                                        {t('managerAccessUnlock')}
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                                        {t('managerProfileNameLabel')}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={managerProfileName}
+                                        onChange={(event) => setManagerProfileName(event.target.value)}
+                                        placeholder={t('teamMemberName')}
+                                        className="w-full rounded-xl bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-4 py-3 text-slate-800 dark:text-white"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                                        {t('managerProfileEmailLabel')}
+                                    </label>
+                                    <input
+                                        type="email"
+                                        value={managerProfileEmail}
+                                        onChange={(event) => setManagerProfileEmail(event.target.value)}
+                                        placeholder={t('teamMemberEmail')}
+                                        className="w-full rounded-xl bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-4 py-3 text-slate-800 dark:text-white"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                                        {t('managerAccessPinLabel')}
+                                    </label>
+                                    <input
+                                        type="password"
+                                        inputMode="numeric"
+                                        value={newPinInput}
+                                        onChange={(event) => setNewPinInput(event.target.value)}
+                                        placeholder="1234"
+                                        className="w-full rounded-xl bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-4 py-3 text-slate-800 dark:text-white text-lg tracking-[0.25em]"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 mb-2">
+                                        {t('managerAccessPinConfirmLabel')}
+                                    </label>
+                                    <input
+                                        type="password"
+                                        inputMode="numeric"
+                                        value={confirmPinInput}
+                                        onChange={(event) => setConfirmPinInput(event.target.value)}
+                                        placeholder="1234"
+                                        className="w-full rounded-xl bg-white/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 px-4 py-3 text-slate-800 dark:text-white text-lg tracking-[0.25em]"
+                                    />
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button onClick={handleManagerPinCancel} className="rounded-xl px-4 py-3 font-semibold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
+                                        {t('managerAccessCancel')}
+                                    </button>
+                                    <button onClick={handleManagerPinSubmit} className="rounded-xl px-4 py-3 font-semibold bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+                                        {t('managerCreateProfileButton')}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Analytics Dashboard */}
             <AnalyticsDashboard 
@@ -1912,7 +3277,7 @@ const App: React.FC = () => {
                                     <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('sectionCapacity')}</h3>
                                     <div className="bg-white/60 dark:bg-black/20 p-6 rounded-3xl flex items-center justify-between border border-white/40 dark:border-white/5">
                                         <label htmlFor="max-capacity" className="font-medium text-slate-700 dark:text-slate-200">{t('maxCapacityLabel')}</label>
-                                        <input id="max-capacity" type="number" value={maxCapacity} onChange={e => setMaxCapacity(Math.max(1, parseInt(e.target.value) || 1))} className="bg-white dark:bg-slate-800/50 rounded-xl p-3 w-32 text-center font-bold text-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-inner text-slate-800 dark:text-white"/>
+                                        <input id="max-capacity" type="number" value={maxCapacity} min={1} max={100000} onChange={e => setMaxCapacity(clamp(Number.parseInt(e.target.value, 10) || 1, 1, 100000))} className="bg-white dark:bg-slate-800/50 rounded-xl p-3 w-32 text-center font-bold text-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-inner text-slate-800 dark:text-white"/>
                                     </div>
                                 </div>
 
@@ -2008,7 +3373,7 @@ const App: React.FC = () => {
                                     <div className="bg-white/60 dark:bg-black/20 p-6 rounded-3xl space-y-4 border border-white/40 dark:border-white/5">
                                         <div className="flex items-center justify-between">
                                             <label htmlFor="data-retention" className="font-medium text-slate-700 dark:text-slate-200">{t('dataRetentionLabel')}</label>
-                                            <select id="data-retention" value={settings.advanced.dataRetentionDays} onChange={(e) => setSettings(s => ({...s, advanced: {...s.advanced, dataRetentionDays: parseInt(e.target.value)}}))} className="bg-white dark:bg-slate-800/50 rounded-xl p-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800 dark:text-white">
+                                            <select id="data-retention" value={settings.advanced.dataRetentionDays} onChange={(e) => setSettings(s => ({...s, advanced: {...s.advanced, dataRetentionDays: Number.parseInt(e.target.value, 10) || 0}}))} className="bg-white dark:bg-slate-800/50 rounded-xl p-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800 dark:text-white">
                                                 <option value="0">{t('dataRetentionNever')}</option>
                                                 <option value="7">{t('dataRetentionDays', {days: '7'})}</option>
                                                 <option value="30">{t('dataRetentionDays', {days: '30'})}</option>
@@ -2168,74 +3533,61 @@ const App: React.FC = () => {
                             {/* Pricing */}
                             <div className="mb-8 p-8 rounded-3xl bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border-2 border-purple-200 dark:border-purple-800 text-center">
                                 <div className="mb-4">
-                                    <span className="text-5xl font-bold text-slate-800 dark:text-white">12 CHF</span>
-                                    <span className="text-xl text-slate-600 dark:text-slate-300 ml-2">/ {t('subscriptionPrice').split('/')[1]}</span>
+                                    <span className="text-5xl font-bold text-slate-800 dark:text-white">{billingPackagePrice}</span>
                                 </div>
-                                <p className="text-sm text-slate-600 dark:text-slate-400">{t('subscriptionUpgradePrompt')}</p>
+                                {billingPackage?.product.title ? (
+                                    <p className="text-sm text-slate-600 dark:text-slate-400">{billingPackage.product.title}</p>
+                                ) : (
+                                    <p className="text-sm text-slate-600 dark:text-slate-400">{t('subscriptionUpgradePrompt')}</p>
+                                )}
                             </div>
 
                             {/* Actions */}
                             <div className="space-y-4">
-                                {!isPremium ? (
-                                    <>
-                                        {/* License Key Activation */}
-                                        <div className="space-y-4">
-                                            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 text-center mb-2">{t('licenseKeyTitle')}</h4>
-                                            <p className="text-xs text-slate-600 dark:text-slate-400 text-center mb-4">{t('licenseKeyDescription')}</p>
-
-                                            {/* License Key Input */}
-                                            <input
-                                                type="text"
-                                                value={licenseKey}
-                                                onChange={(e) => setLicenseKey(e.target.value.toUpperCase())}
-                                                placeholder="VENUEPULSE-XXXX-XXXX-XXXX"
-                                                className="w-full p-4 rounded-lg border-2 border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-white font-mono text-center focus:outline-none focus:border-purple-500 dark:focus:border-purple-400"
-                                                maxLength={27}
-                                            />
-
-                                            {/* Activate Button */}
-                                            <button
-                                                onClick={handleActivateLicense}
-                                                disabled={!licenseKey.trim()}
-                                                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg p-4 font-semibold hover:from-purple-700 hover:to-pink-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                                {t('licenseKeyActivate')}
-                                            </button>
-
-                                            {/* Purchase Info */}
-                                            <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-                                                <p className="text-sm text-blue-700 dark:text-blue-300 text-center mb-2">
-                                                    {t('licenseKeyPurchaseInfo')}
-                                                </p>
-                                                <a
-                                                    href="mailto:support@venuepulse.com?subject=Premium License"
-                                                    className="text-sm text-blue-600 dark:text-blue-400 hover:underline block text-center"
-                                                >
-                                                    {t('licenseKeyContactUs')}
-                                                </a>
-                                            </div>
-
-                                            {/* How it works */}
-                                            <div className="flex items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400 pt-2">
-                                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                                                </svg>
-                                                <span>{t('licenseKeyHelp')}</span>
-                                            </div>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div className="p-4 rounded-2xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-center">
-                                            <p className="text-sm font-medium text-green-700 dark:text-green-300">
-                                                {subscription.expiresAt && `Valid until ${subscription.expiresAt.toLocaleDateString(currentLocale)}`}
-                                            </p>
-                                        </div>
-                                        <button onClick={handleCancelSubscription} className="w-full p-4 rounded-2xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold transition-all">
-                                            {t('subscriptionCancel')}
-                                        </button>
-                                    </>
+                                {billingLoading && (
+                                    <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-center text-sm font-medium text-blue-700 dark:text-blue-300">
+                                        {t('subscriptionLoadingPlans')}
+                                    </div>
                                 )}
+
+                                {billingNoticeKey && (
+                                    <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-center text-sm font-medium text-amber-700 dark:text-amber-300">
+                                        {t(billingNoticeKey)}
+                                    </div>
+                                )}
+
+                                {isPremium && subscription.expiresAt && (
+                                    <div className="p-4 rounded-2xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-center">
+                                        <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                                            {t('subscriptionValidUntil', { date: subscription.expiresAt.toLocaleDateString(currentLocale) })}
+                                        </p>
+                                    </div>
+                                )}
+
+                                {!isPremium && (
+                                    <button
+                                        onClick={handlePurchaseSubscription}
+                                        disabled={!billingReady || !billingPackage || billingAction !== null}
+                                        className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg p-4 font-semibold hover:from-purple-700 hover:to-pink-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {billingAction === 'purchase' ? t('subscriptionProcessing') : t('subscriptionUpgrade')}
+                                    </button>
+                                )}
+
+                                <button
+                                    onClick={handleRestoreSubscriptions}
+                                    disabled={!hasNativeBilling || billingAction !== null}
+                                    className="w-full p-4 rounded-2xl bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {billingAction === 'restore' ? t('subscriptionProcessing') : t('subscriptionRestore')}
+                                </button>
+
+                                <button
+                                    onClick={handleManageSubscription}
+                                    className="w-full p-4 rounded-2xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold transition-all"
+                                >
+                                    {t('subscriptionManage')}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -2258,7 +3610,7 @@ const App: React.FC = () => {
                                     {isFinancialModalOpen && t('financialTitle')}
                                     {isNotificationModalOpen && t('notificationsTitle')}
                                 </h2>
-                                <p className="text-sm text-slate-600 dark:text-slate-400">Premium Feature</p>
+                                <p className="text-sm text-slate-600 dark:text-slate-400">{t('premiumFeatureLabel')}</p>
                             </div>
                             <button
                                 onClick={() => {
@@ -2287,7 +3639,7 @@ const App: React.FC = () => {
                                             <div className="flex items-center justify-between mb-3">
                                                 <h3 className="font-bold text-lg" style={{color: zone.color}}>{zone.name}</h3>
                                                 <span className={`px-2 py-1 rounded-full text-xs font-bold ${zone.enabled ? 'bg-green-500/20 text-green-700 dark:text-green-300' : 'bg-gray-500/20 text-gray-700 dark:text-gray-300'}`}>
-                                                    {zone.enabled ? t('zoneEnabled') : 'Disabled'}
+                                                    {zone.enabled ? t('zoneEnabled') : t('disabledLabel')}
                                                 </span>
                                             </div>
                                             <div className="flex justify-between text-sm">
@@ -2299,7 +3651,7 @@ const App: React.FC = () => {
                                                     <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                                                         <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                                                     </svg>
-                                                    <span className="font-semibold">VIP</span>
+                                                    <span className="font-semibold">{t('vipLabel')}</span>
                                                 </div>
                                             )}
                                         </div>
@@ -2308,7 +3660,7 @@ const App: React.FC = () => {
                                 <button
                                     onClick={() => {
                                         const newZone: Omit<Zone, 'id' | 'currentCount'> = {
-                                            name: `Zone ${zones.length + 1}`,
+                                            name: t('zoneDefaultName', { number: String(zones.length + 1) }),
                                             maxCapacity: 100,
                                             color: '#3b82f6',
                                             isVIP: false,
@@ -2347,7 +3699,7 @@ const App: React.FC = () => {
                                                     {user.role === 'admin' ? t('teamRoleAdmin') : user.role === 'manager' ? t('teamRoleManager') : t('teamRoleStaff')}
                                                 </span>
                                                 <span className={`text-sm ${user.isActive ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}`}>
-                                                    {user.isActive ? '● Online' : '○ Offline'}
+                                                    {user.isActive ? `● ${t('teamMemberActive')}` : `○ ${t('teamMemberInactive')}`}
                                                 </span>
                                             </div>
                                         </div>
@@ -2388,7 +3740,7 @@ const App: React.FC = () => {
                                             </div>
                                             <div className="flex gap-2">
                                                 {guest.isVIP && (
-                                                    <span className="px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-700 dark:text-yellow-300 text-xs font-bold">VIP</span>
+                                                    <span className="px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-700 dark:text-yellow-300 text-xs font-bold">{t('vipLabel')}</span>
                                                 )}
                                                 <button onClick={() => handleGuestCheckOut(guest.id)} className="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-all">
                                                     {t('guestCheckOut')}
@@ -2466,7 +3818,7 @@ const App: React.FC = () => {
                                                 )}
                                                 {entry.status === 'notified' && (
                                                     <span className="px-3 py-1 rounded-full bg-blue-500/20 text-blue-700 dark:text-blue-300 text-xs font-bold">
-                                                        Notified
+                                                        {t('waitlistNotified')}
                                                     </span>
                                                 )}
                                             </div>
@@ -2552,6 +3904,28 @@ const App: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Alert Modal (replaces native alert()) */}
+            <AlertModal
+                isOpen={alertModal !== null}
+                title={alertModal?.title ?? ''}
+                message={alertModal?.message ?? ''}
+                buttonLabel={t('close')}
+                variant={alertModal?.variant ?? 'info'}
+                onClose={() => setAlertModal(null)}
+            />
+
+            {/* Confirm Modal (replaces native confirm()) */}
+            <ConfirmModal
+                isOpen={confirmModal !== null}
+                title={confirmModal?.title ?? ''}
+                message={confirmModal?.message ?? ''}
+                confirmLabel={confirmModal?.confirmLabel ?? t('confirmAction')}
+                cancelLabel={confirmModal?.cancelLabel ?? t('managerAccessCancel')}
+                variant={confirmModal?.variant ?? 'info'}
+                onConfirm={() => confirmModal?.onConfirm()}
+                onCancel={() => setConfirmModal(null)}
+            />
         </>
     );
 };

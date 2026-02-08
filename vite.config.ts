@@ -8,13 +8,14 @@ export default defineConfig(({ mode }) => {
     return {
       base: './',
       server: {
-        port: 3000,
+        port: 3001,
         host: '0.0.0.0',
       },
       plugins: [react()],
       test: {
         environment: 'jsdom',
         globals: true,
+        setupFiles: './vitest.setup.ts',
       },
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),

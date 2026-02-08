@@ -25,6 +25,7 @@ export interface UndoAction {
   action: 'in' | 'out';
   timestamp: Date;
   logEntryId: number;
+  zoneId?: string;
 }
 
 export type SubscriptionTier = 'free' | 'premium';
