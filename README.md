@@ -27,14 +27,17 @@ Prerequisites:
 The app now supports shared server state via `/api/state` instead of device-only local storage.
 
 How to enable on Vercel:
-1. Add a Vercel KV (Upstash Redis) integration to the project.
+1. Add an Upstash Redis integration from Vercel Marketplace to the project.
 2. In Vercel project environment variables, set:
-   - `KV_REST_API_URL`
-   - `KV_REST_API_TOKEN`
+   - `UPSTASH_REDIS_REST_URL`
+   - `UPSTASH_REDIS_REST_TOKEN`
 3. Set client variables (Production/Preview):
    - `VITE_REMOTE_STATE_ENABLED=true`
    - `VITE_VENUE_ID=venuepulse-main` (or any venue id you want)
 4. Redeploy.
+
+Compatibility:
+- The backend also accepts legacy `KV_REST_API_URL` / `KV_REST_API_TOKEN` if already configured.
 
 Behavior:
 - On app start, web clients hydrate state from `/api/state`.

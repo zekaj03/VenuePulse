@@ -1,4 +1,4 @@
-import { kv } from '@vercel/kv';
+import { Redis } from '@upstash/redis';
 
 type Dict = Record<string, unknown>;
 
@@ -35,6 +35,13 @@ const readVenueId = (req: any, body?: Dict): string => {
   return normalizeVenueId(fromBody || fromQuery || 'default');
 };
 
+const createRedisClient = (): Redis | null => {
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  if (!url || !token) return null;
+  return new Redis({ url, token });
+};
+
 export default async function handler(req: any, res: any): Promise<void> {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,PATCH,OPTIONS');
@@ -46,14 +53,15 @@ export default async function handler(req: any, res: any): Promise<void> {
     return;
   }
 
-  if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
-    res.status(503).json({ error: 'KV backend is not configured' });
+  const redis = createRedisClient();
+  if (!redis) {
+    res.status(503).json({ error: 'Redis backend is not configured' });
     return;
   }
 
   if (req.method === 'GET') {
     const venueId = readVenueId(req);
-    const stored = (await kv.get<Dict>(stateKey(venueId))) ?? {};
+    const stored = (await redis.get<Dict>(stateKey(venueId))) ?? {};
     res.status(200).json({ venueId, state: stored });
     return;
   }
@@ -62,14 +70,14 @@ export default async function handler(req: any, res: any): Promise<void> {
     const body = parseJsonBody(req);
     const venueId = readVenueId(req, body);
     const patch = isDict(body.patch) ? body.patch : {};
-    const existing = (await kv.get<Dict>(stateKey(venueId))) ?? {};
+    const existing = (await redis.get<Dict>(stateKey(venueId))) ?? {};
     const nextState: Dict = {
       ...existing,
       ...patch,
       _updatedAt: typeof body.updatedAt === 'string' ? body.updatedAt : new Date().toISOString(),
     };
 
-    await kv.set(stateKey(venueId), nextState);
+    await redis.set(stateKey(venueId), nextState);
     res.status(200).json({ ok: true, venueId, updatedAt: nextState._updatedAt });
     return;
   }
