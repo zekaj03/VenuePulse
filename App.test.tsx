@@ -19,9 +19,12 @@ Object.defineProperty(window, 'matchMedia', {
 });
 
 describe('App', () => {
-  it('renders headline', () => {
+  it('renders headline', async () => {
     render(<App />);
-    const headline = screen.getByText(/VenuePulse/i);
+
+    // App performs async state updates during initialization; using findBy* ensures
+    // React Testing Library waits for the UI to settle (wrapped in act).
+    const headline = await screen.findByText(/VenuePulse/i);
     expect(headline).toBeInTheDocument();
   });
 });
