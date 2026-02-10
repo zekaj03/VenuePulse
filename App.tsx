@@ -419,20 +419,14 @@ const restoreFromBackup = (file: File, callback: (data: any) => void, errorCallb
                 return;
             }
 
-            // Validate backup data structure
+            // Validate + parse backup data structure (includes timestamp reconstitution)
             const validation = validateBackupData(backup.data);
             if (!validation.valid) {
                 errorCallback(validation.error);
                 return;
             }
 
-            // Parse timestamps in log
-            if (backup.data.log && Array.isArray(backup.data.log)) {
-                backup.data.log.forEach((entry: any) => {
-                    entry.timestamp = new Date(entry.timestamp);
-                });
-            }
-            callback(backup.data);
+            callback(validation.value);
         } catch (error) {
             errorCallback('Failed to parse backup file');
         }
@@ -1980,10 +1974,16 @@ const App: React.FC = () => {
 
     const handleVerifyPIN = useCallback(async (inputPin: string) => {
         if (!security.pin) return false;
-        const isValid = await verifyPin(inputPin, security.pin);
-        if (isValid) {
+
+        const result = await verifyPin(inputPin, security.pin);
+        if (result.ok) {
+            // Seamless migration: upgrade legacy PIN hashes to PBKDF2 on successful verification.
+            if (result.needsUpgrade) {
+                setSecurity(prev => ({ ...prev, pin: result.upgradedHash }));
+            }
             return true;
         }
+
         return false;
     }, [security.pin]);
 

@@ -46,33 +46,28 @@ describe('generateApiKey', () => {
 });
 
 describe('hashPin / verifyPin', () => {
-  it('hashes a PIN to a hex string', async () => {
+  it('hashes a PIN to a PBKDF2 payload string', async () => {
     const hashed = await hashPin('1234');
     expect(typeof hashed).toBe('string');
     expect(hashed.length).toBeGreaterThan(0);
-    // SHA-256 produces 64 hex chars
-    expect(hashed).toMatch(/^[a-f0-9]{64}$/);
+    expect(hashed.startsWith('vp-pbkdf2$')).toBe(true);
   });
 
-  it('produces different hashes for different PINs', async () => {
+  it('produces different hashes for the same PIN (salted)', async () => {
     const hash1 = await hashPin('1234');
-    const hash2 = await hashPin('5678');
+    const hash2 = await hashPin('1234');
     expect(hash1).not.toBe(hash2);
   });
 
-  it('produces consistent hashes for the same PIN', async () => {
-    const hash1 = await hashPin('1234');
-    const hash2 = await hashPin('1234');
-    expect(hash1).toBe(hash2);
+  it('verifyPin returns ok for correct PIN', async () => {
+    const stored = await hashPin('9999');
+    const result = await verifyPin('9999', stored);
+    expect(result.ok).toBe(true);
   });
 
-  it('verifyPin returns true for correct PIN', async () => {
+  it('verifyPin returns not ok for wrong PIN', async () => {
     const stored = await hashPin('9999');
-    expect(await verifyPin('9999', stored)).toBe(true);
-  });
-
-  it('verifyPin returns false for wrong PIN', async () => {
-    const stored = await hashPin('9999');
-    expect(await verifyPin('0000', stored)).toBe(false);
+    const result = await verifyPin('0000', stored);
+    expect(result.ok).toBe(false);
   });
 });

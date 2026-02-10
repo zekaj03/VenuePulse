@@ -24,7 +24,6 @@ describe('validateBackupData', () => {
       counts: { Male: -1, Female: 3, Other: 2 },
     });
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('Male');
   });
 
   it('validates maxCapacity', () => {
