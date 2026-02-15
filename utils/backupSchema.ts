@@ -46,7 +46,7 @@ const logEntrySchema = z
 
 // Settings are large and evolve; we validate only that it's an object.
 // (We keep stricter validation for the most security-sensitive / safety-critical fields above.)
-const settingsSchema = z.record(z.unknown());
+const settingsSchema = z.record(z.string(), z.unknown());
 
 export const backupDataSchema = z
   .object({

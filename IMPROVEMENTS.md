@@ -1,41 +1,47 @@
 # VenuePulse - Recommended Improvements
 
+## Status: Completed Items
+
+✅ **DONE - License Key Generator:** HMAC-SHA256 implementation (`utils/crypto.ts`)
+✅ **DONE - API Key Generation:** Uses `crypto.getRandomValues()` (`utils/crypto.ts`)
+✅ **DONE - PIN Storage:** PBKDF2 hashing with salt (`utils/crypto.ts`)
+✅ **DONE - Backup Validation:** Zod schema validation (`utils/backupSchema.ts`)
+✅ **DONE - TypeScript Strict Mode:** Enabled in `tsconfig.json`, all errors fixed
+✅ **DONE - localStorage Debouncing:** 500ms debounce implemented (`hooks/useLocalStorage.ts`)
+✅ **DONE - Date.now() for IDs:** Replaced with `crypto.randomUUID()` (`utils/crypto.ts`)
+✅ **DONE - Replace alert()/confirm():** Using ConfirmModal/AlertModal components
+✅ **DONE - i18n String Replacement:** Using `replaceAll()` in translations
+✅ **DONE - Config File:** Created `config.ts` with environment variable support
+✅ **DONE - Structured Logger:** Created `utils/logger.ts`
+✅ **DONE - Zod v4 Compatibility:** Fixed `z.record()` call
+
+---
+
+## Remaining Issues (by Priority)
+
 ## Critical (Must Fix)
 
-### 1. Weak License Key Validation
-**File:** `App.tsx:1104-1121`
-
-The license key uses a trivial checksum (sum of char codes mod 65536) that can be easily reverse-engineered. The `generate-license-key.js` script exposes the algorithm publicly.
-
-**Fix:** Move license verification to a backend service using cryptographic signatures (e.g., HMAC-SHA256 or RSA-signed tokens).
-
-### 2. API Key Stored in Plain Text in localStorage
+### 1. API Key Stored in Plain Text in localStorage ⚠️
 **File:** `App.tsx:690, 756`
 
 API keys are stored and read from localStorage, which is accessible to any script or browser extension on the page.
 
-**Fix:** Use a backend proxy for API-authenticated requests. Never store API secrets in browser storage.
+**Note:** RevenueCat SDK requires API key to be accessible. This is a known limitation of client-side-only apps. Consider using a backend proxy for production deployments.
 
-### 3. Weak API Key Generation
-**File:** `App.tsx:1444`
+**Workaround:** Document this limitation clearly for users.
 
-`Math.random()` is not cryptographically secure. Generated API keys are predictable.
+### 2. Monolithic App.tsx (2,558 lines) - Medium Priority
+**File:** `App.tsx`
 
-**Fix:** Replace with `crypto.randomUUID()` or `crypto.getRandomValues()`.
+The entire application lives in a single component. This makes the code hard to test, review, and maintain.
 
-### 4. Insufficient Backup File Validation
-**File:** `App.tsx:253-274`
-
-Restored backups only check for `version` and `data` properties. No schema validation is performed on the actual data, allowing corrupted or malicious files to inject invalid state.
-
-**Fix:** Validate all fields against a schema (e.g., Zod) before restoring.
-
-### 5. Plain Text PIN Storage
-**File:** `App.tsx:656-661`
-
-Security PINs are stored in plaintext in localStorage.
-
-**Fix:** Hash PINs before storage (e.g., using the Web Crypto API with PBKDF2).
+**Recommendation:** Extract components incrementally:
+- `CounterPanel` — entry/exit counting logic
+- `ZoneManager` — zone CRUD and display
+- `GuestList` — guest management
+- `SettingsPanel` — settings form
+- `HistoryView` — log display and search
+- Use Context API or Zustand for shared state
 
 ---
 
@@ -46,57 +52,27 @@ Security PINs are stored in plaintext in localStorage.
 
 The entire application lives in a single component with 70+ `useState` declarations, 20+ `useCallback` handlers, and all UI rendering. This makes the code hard to test, review, and maintain.
 
-**Fix:** Extract into smaller components:
-- `CounterPanel` — entry/exit counting logic
-- `ZoneManager` — zone CRUD and display
-- `GuestList` — guest management
-- `SettingsPanel` — settings form
-- `HistoryView` — log display and search
-- Use Context API or Zustand for shared state
+**Recommendation:** Extract components incrementally (see note above).
 
-### 7. Excessive Use of `any` Type
+### 7. Excessive Use of `any` Type - ✅ FIXED
 **Files:** `App.tsx:172, 203, 237, 563, 711`
 
-Multiple functions use `any`, defeating TypeScript's type safety.
+TypeScript strict mode is now enabled and all `any` types have been resolved or properly typed.
 
-**Fix:** Define proper interfaces for all data structures (backup data, export data, translation keys) and enable `strict: true` in `tsconfig.json`.
+### 8. State Persisted on Every Change - ✅ FIXED
+**File:** `hooks/useLocalStorage.ts`
 
-### 8. State Persisted on Every Change Without Debouncing
-**File:** `App.tsx:733-757`
+Debounced persistence (500ms delay) is implemented with selective key writes.
 
-A single `useEffect` writes 23 items to localStorage whenever *any* piece of state changes. This is wasteful and can hit localStorage quota limits.
+### 9. Test Coverage - ✅ IMPROVED
+**File:** Various test files
 
-**Fix:** Debounce persistence (e.g., 500ms delay) and only write the specific keys that changed.
+Existing tests cover: crypto functions, validation, backup schema, modals, localStorage hooks, API state. Consider adding more for counter logic.
 
-### 9. Minimal Test Coverage
-**File:** `App.test.tsx`
-
-Only one test exists — it checks that the app renders. No business logic, error handling, or edge case testing.
-
-**Fix:** Add tests for:
-- Counter increment/decrement logic and boundary conditions
-- License key validation
-- Backup/restore round-trips
-- i18n translation lookups
-- Data persistence and loading
-
-### 10. Missing TypeScript Strict Mode
+### 10. TypeScript Strict Mode - ✅ FIXED
 **File:** `tsconfig.json`
 
-`strict` mode is not enabled; `skipLibCheck` is true. Many type errors go undetected.
-
-**Fix:** Enable `"strict": true` and resolve all resulting errors.
-
----
-
-## Medium Priority
-
-### 11. `Date.now()` Used for IDs
-**Files:** `App.tsx:963, 1196, 1217, 1227, 1253`
-
-`Date.now()` is not guaranteed unique under rapid operations.
-
-**Fix:** Use `crypto.randomUUID()`.
+`strict` mode is enabled and all TypeScript errors have been resolved.
 
 ### 12. No Pagination for Large Data Sets
 Audit logs (capped at 1000), activity logs, and guest lists render all entries at once.
@@ -110,29 +86,32 @@ Environment variables are loaded but never validated at startup.
 
 **Fix:** Validate required env vars on app init and fail fast with clear messages.
 
-### 14. Hardcoded Configuration Values
-Free tier limit (50), audit log cap (1000), session timeout (30 min), and capacity thresholds (50/75/90%) are all hardcoded.
+### 14. Hardcoded Configuration Values - ✅ FIXED
+**File:** `config.ts`
 
-**Fix:** Move to a configuration file or environment variables.
+Configuration file created with environment variable support. Values include:
+- defaultMaxCapacity (200)
+- capacityThresholds (50,75,90)
+- auditLogMaxEntries (1000)
+- sessionTimeout (30 min)
+- freeTierLogLimit (50)
 
-### 15. Fragile Date Handling in `loadValidatedState`
-**File:** `App.tsx:122-183`
+### 15. Fragile Date Handling in `loadValidatedState` - ✅ FIXED
+**File:** `App.tsx`, `utils/backupSchema.ts`
 
-Date reconstitution from JSON is done with repeated manual checks for each localStorage key. This is fragile and error-prone.
+Zod schema now uses `.transform()` for date fields.
 
-**Fix:** Use a schema validation library (Zod) with `.transform()` for date fields.
+### 16. Structured Logging - ✅ FIXED
+**File:** `utils/logger.ts`
 
-### 16. No Structured Logging or Error Tracking
-Errors are logged to `console.error` with no structure, no severity levels, and some messages are in German.
-
-**Fix:** Add structured logging and integrate an error tracking service (e.g., Sentry).
+Structured logger implemented with severity levels and context support.
 
 ### 17. Simulated Sync — No Real Offline Support
 **File:** `App.tsx:676-679, 1404-1417`
 
 The sync function is a fake `setTimeout`. Offline detection uses only `navigator.onLine`.
 
-**Fix:** Implement a Service Worker for real offline support and a backend sync endpoint with conflict resolution.
+**Recommendation:** Implement a Service Worker for real offline support and a backend sync endpoint with conflict resolution.
 
 ---
 
@@ -145,27 +124,23 @@ While the SVG is currently hardcoded, using `dangerouslySetInnerHTML` is a code 
 
 **Fix:** Convert to a React SVG component.
 
-### 19. Browser `alert()`/`confirm()` Dialogs
-**File:** `App.tsx:1136, 1141, 1151`
+### 19. Browser `alert()`/`confirm()` Dialogs - ✅ FIXED
+**File:** `App.tsx`
 
-Native browser dialogs block the UI thread and cannot be styled.
+Replaced with ConfirmModal/AlertModal components.
 
-**Fix:** Replace with modal components.
-
-### 20. i18n String Replacement Is Fragile
+### 20. i18n String Replacement - ✅ FIXED
 **File:** `App.tsx:713-715`
 
-`String.replace()` only replaces the first occurrence and doesn't handle special characters.
+Now using `replaceAll()` for translation replacements.
 
-**Fix:** Use `replaceAll()` or adopt a proper i18n library (e.g., `i18next`).
+### 21. Missing ARIA Labels - ✅ MOSTLY FIXED
+Most interactive elements have ARIA labels. Continue auditing new components.
 
-### 21. Missing ARIA Labels
-Some interactive buttons lack `aria-label` attributes.
+### 22. localStorage Quota Management - ✅ PARTIALLY FIXED
+**File:** `hooks/useLocalStorage.ts`
 
-**Fix:** Audit all interactive elements and add appropriate ARIA attributes.
-
-### 22. No localStorage Quota Management
-No checks before writing; no cleanup when approaching the ~5-10MB limit.
+Error handling added for QuotaExceededError, but proactive quota checking not implemented.
 
 **Fix:** Check `navigator.storage.estimate()` and warn users when storage is low.
 
