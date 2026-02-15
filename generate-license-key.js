@@ -1,47 +1,50 @@
 #!/usr/bin/env node
 
 /**
- * VenuePulse License Key Generator
+ * VenuePulse License Key Generator (SECURE VERSION)
  *
- * Usage: node generate-license-key.js [count]
+ * Usage: node generate-license-key.js [count] [secret]
  *
- * Generates valid license keys for VenuePulse Premium.
- * Keys format: VENUEPULSE-XXXX-XXXX-XXXX
+ * Generates cryptographically signed license keys for VenuePulse Premium.
+ * Keys format: VENUEPULSE-XXXX-XXXX-XXXX-XXXX
  *
- * The last segment is a checksum to prevent simple forgery.
+ * Requires a secret key for signing. Set VENUEPULSE_SECRET env variable.
  */
 
-function generateRandomSegment() {
+const crypto = require('crypto');
+
+const SECRET = process.env.VENUEPULSE_SECRET || 'default-dev-secret-change-in-production';
+
+function generateRandomSegment(length = 4) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let segment = '';
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < length; i++) {
     segment += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return segment;
 }
 
-function calculateChecksum(dataSegments) {
-  let sum = 0;
-  for (let i = 0; i < dataSegments.length; i++) {
-    sum += dataSegments.charCodeAt(i);
-  }
-  return (sum % 65536).toString(16).toUpperCase().padStart(4, '0');
-}
-
 function generateLicenseKey() {
-  const segment1 = generateRandomSegment();
-  const segment2 = generateRandomSegment();
-  const dataSegments = segment1 + segment2;
-  const checksum = calculateChecksum(dataSegments);
+  // Generate random license data
+  const segment1 = generateRandomSegment(4);
+  const segment2 = generateRandomSegment(4);
+  const segment3 = generateRandomSegment(4);
+  const data = `${segment1}-${segment2}-${segment3}`;
 
-  return `VENUEPULSE-${segment1}-${segment2}-${checksum}`;
+  // Create HMAC-SHA256 signature
+  const hmac = crypto.createHmac('sha256', SECRET);
+  hmac.update(data);
+  const signature = hmac.digest('hex').toUpperCase().slice(0, 4);
+
+  return `VENUEPULSE-${data}-${signature}`;
 }
 
 // Main execution
 const count = parseInt(process.argv[2]) || 1;
 
-console.log('\n🎫 VenuePulse License Key Generator\n');
+console.log('\n🔐 VenuePulse License Key Generator (Secure)\n');
 console.log(`Generating ${count} license key(s)...\n`);
+console.log(`⚠️  Using ${SECRET === 'default-dev-secret-change-in-production' ? 'DEFAULT SECRET - CHANGE IN PROD!' : 'custom secret'}\n`);
 
 for (let i = 0; i < count; i++) {
   const key = generateLicenseKey();
@@ -49,4 +52,4 @@ for (let i = 0; i < count; i++) {
 }
 
 console.log('\n✅ Done! Copy any key above and paste it into VenuePulse.\n');
-console.log('💡 Tip: Save these keys for your customers or Gumroad product setup.\n');
+console.log('💡 Tip: Set VENUEPULSE_SECRET environment variable for production.\n');
